@@ -1,0 +1,38 @@
+### 1. Objetivo del producto
+Sistema de seguimiento e interfaz de planificación (Project Management Dashboard) orientado a uso operativo industrial e institucional. Provee insight en tiempo real sobre retrasos, dependencias y costos, facilitando la toma de decisiones gerenciales mediante métricas híbridas consolidadas.
+
+### 2. Estructura del dashboard
+- **Sidebar (Izquierdo)**: Panel de inicio colapsado de forma predeterminada para maximizar el área visual de planeamiento. Contiene menú global (rotulado "MENÚ"), listados de proyectos (en texto tipo UPPERCASE), botón primario expansible ("＋ Nuevo") y header de perfil de usuario.
+- **Header & Toolbar**: Barra de comandos superior concentrada. Panel izquierdo con "≡ Lista de tareas" y rótulos identificadores. Panel derecho albergando selectores de Zoom y Opciones de Exportación (PDF/CSV/Excel).
+- **Tarjetas KPI**: Faja superior (Summary Strip) reestructurada sobre 4 columnas unificando Totalizaciones.
+- **Barra de Filtros**: Inserción horizontal dinámica con elementos extremos iterados (botones simétricos y perimetrales "Deshacer Filtro" como píldoras) para una recuperación visual de estado.
+- **Main View**: Canvas priorizando Diagrama Gantt sobre la tabla de control (tabla inicia deshabilitada). Al activar la tabla, las subtareas inician colapsadas por defecto para mantener el orden.
+
+### 3. Componentes principales
+- **Diagrama Gantt (DHTMLX)**: Motor estructural que renderiza barras temporales, dependencias operacionales y líneas de Hoy (today marker).
+- **Filtros Customizados**: Reemplazo de SelectTags nativos con pseudo-dropdowns para renderizado de HTML rico (Mini-Badges de estados embebidos in-option).
+- **KPIs Compuestos**: Tarjetas de valores que presentan doble métrica condensada. Exhiben la relación "Tareas Finalizadas / Total de Tareas (X%)" con sub-fila de "Subtareas (X / Total Y%)".
+- **Desplegables Compactos**: Arquitectura de sub-menús agrupados usando el componente Pill-Dropdown.
+
+### 4. Reglas UX/UI
+- **Jerarquía y Foco**: Componentes estáticos opcionales ocultos en la inicialización (Sidebars y DataGrid) apuntando todo el primer view al mapa del proyecto.
+- **Seguridad de Interfaz**: Las herramientas de gestión crítica (botón de usuarios ⚙️ y etiqueta de rol "Administrador") solo se renderizan/muestran si el objeto de usuario activo posee la propiedad `es_admin: true`. Para usuarios estándar, estos elementos permanecen ocultos para simplificar la experiencia.
+- **Sistema de Color**: "Dark Mode Premium". Altos contrastes y mitigación de sombras difusas. Variables actualizadas para máxima lectura: textos atenuados iluminados (`--text-muted: #cbd5e1`, `--text-dim: #94a3b8`); acentos visuales y estados activos en `var(--indigo)` (`#6366f1`).
+- **Morfología Circular**: Envolventes visuales con `border-radius: 100px` (Botones Píldora / `.btn-pill`) reduciendo aristas vivas donde corresponda, para componentes interactuados frecuentemente.
+- **Estado Predictivo**: Controles con remarcado de estado activo explícito (El selector temporal de Mes/Día retiene clase CSS `btn-primary` para reflejar contexto constante al operador).
+
+### 5. Reglas específicas del Gantt
+- **Semántica de Estado**: Estados condicionales dinámicos. Un estado es "Retrasada" sí StartDate <= Today y progreso 0%. Un estado pasa a "Bloqueada" si una tarea de la que depende (predecesora) no está aún `Finalizada`. 
+- **Presentación Limpia**: Grilla de datos despojada de círculos de código de proyecto o íconos redundantes. Extracción de dependencias mediante badges tipográficos `inline-block` customizados que heredan paleta. Mantenimiento estricto global a font-family `Inter` en toda la grilla de DHTMLX mediante anulaciones `!important`.
+- **Interacción de Notas**: El icono de nota se aloja exclusivamente en su columna (`notes_col`), representado por un botón estilizado (Indigo con SVG blanco) que abre el modal de notas al hacer clic. No se muestran iconos de notas en el nombre de la tarea.
+
+### 6. Decisiones tomadas
+- Se centralizó e implementó un custom dropdown "＋ Nuevo ▼" extirpando botones duplicados y conflictivos.
+- Se programó motor de parseo y segregación en el dashboard KPI para separar métricas analíticas directas ("T:") de Subtareas ("S:"), reteniendo el límite de Layout a solo 4 tarjetas.
+- Se codificó un menú customizado (Custom Select Dropdown) de Estado para sobrepasar la limitación de `<options>` nativos, imprimiendo las correspondientes Badges.
+- Los botones de reset de filtros se ubican en ambos márgenes de la fila (simetría) en formato píldora alto contraste.
+- Todos los Proyectos mutó contextualmente a la denominación abstracta “MENÚ”.
+- Initial state override aplicado: arranca configurado a nivel Zoom Mensual (Month Scale), asimilado a solo canvas (Ocultar Lista) y Barra lateral colapsada.
+
+### 7. Pendientes / próximos pasos
+- No hay. Todos los issues referidos a comportamientos anómalos de toggle (Lista/Gantt) y contrastes de fuente nativa resueltos íntegramente.

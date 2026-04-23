@@ -1,0 +1,52 @@
+# Arquitactura OVO2
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: ovo2-db
+    restart: always
+    command: "--host-cache-size=0" # Reemplaza el deprecado --skip-host-cache
+    environment:
+      MYSQL_ROOT_PASSWORD: ovo_password_2024
+      MYSQL_DATABASE: ovo2
+    ports:
+      - "3307:3306"
+    volumes:
+      - ovo2-data:/var/lib/mysql
+
+  app:
+    build: .
+    container_name: ovo2-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=ovo_password_2024
+      - DB_NAME=ovo2
+      - PORT=3000
+    depends_on:
+      - db
+
+  # 🤖 SERVICIO DE BACKUP AUTOMÁTICO
+  backup-cron:
+    image: fradelg/mysql-cron-backup:latest
+    container_name: ovo2-backup-cron
+    restart: always
+    depends_on:
+      - db
+    environment:
+      - MYSQL_HOST=db
+      - MYSQL_USER=root
+      - MYSQL_PASS=ovo_password_2024
+      - MYSQL_DATABASE=ovo2
+      - CRON_SCHEDULE=0 0 * * *  # Todos los días a medianoche
+      - MAX_BACKUPS=7           # Mantener solo los últimos 7 días
+      - INIT_BACKUP=0           # 0 = No hacer backup al arrancar (solo en horario cron)
+    volumes:
+      - ./backups:/backup       # Mapeo a carpeta local para fácil acceso
+
+volumes:
+  ovo2-data:

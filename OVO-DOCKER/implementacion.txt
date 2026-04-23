@@ -1,0 +1,74 @@
+# GUÍA PASO A PASO: INSTALACIÓN DEL SISTEMA OVO2 (PARA PRINCIPIANTES)
+
+Si nunca has instalado un servidor o una aplicación web, no te preocupes. Sigue estos pasos en orden para dejar el sistema funcionando en la red de tu empresa.
+
+---
+
+### PASO 1: Preparar la Computadora (Servidor)
+El "Servidor" es simplemente la computadora que siempre estará encendida para que los demás entren.
+
+1. **Descargar e Instalar Node.js**:
+   - Ve a [nodejs.org](https://nodejs.org/).
+   - Haz clic en la opción que dice **"LTS"** (es la más estable).
+   - Instálalo normal, dándole a "Siguiente" a todo.
+2. **Descargar e Instalar MySQL**:
+   - Ve a [MySQL Installer](https://dev.mysql.com/downloads/installer/).
+   - Elige la versión "Community". Durante la instalación, te pedirá una **contraseña para el usuario 'root'**. 
+   - **IMPORTANTE**: Anota esa contraseña, la usaremos más adelante.
+
+---
+
+### PASO 2: Configurar la Base de Datos
+1. Abre el programa **MySQL Workbench** (se instaló con MySQL).
+2. Haz clic en la conexión local e ingresa la contraseña que anotaste.
+3. Arriba a la izquierda, busca un icono de un rayo o "File > Open SQL Script".
+4. Busca el archivo `sql/schema.sql` que está dentro de la carpeta del proyecto OVO2 y dale a **Run** (el rayo).
+   - *Esto creará el "cerebro" donde se guardarán las tareas.*
+
+---
+
+### PASO 3: Mover el Proyecto al Servidor
+1. Copia la carpeta completa `OVO2` a un lugar seguro en el disco C: (ejemplo: `C:\OVO2`).
+2. Entra a la carpeta `C:\OVO2\backend`.
+
+---
+
+### PASO 4: Configurar los "Ajustes" (.env)
+1. Dentro de `C:\OVO2\backend`, busca un archivo llamado `.env`. Si no existe, crea uno nuevo con el Bloc de Notas.
+2. Asegúrate de que el contenido sea exactamente así (cambiando la contraseña por la tuya):
+   ```text
+   DB_HOST=localhost
+   DB_NAME=ovo2
+   DB_USER=root
+   DB_PASSWORD=LA_CONTRASEÑA_QUE_ANOTASTE
+   PORT=3000
+   JWT_SECRET=ovobrand_secreto_2024
+   ```
+3. Guarda el archivo.
+
+---
+
+### PASO 5: Arrancar el sistema por primera vez
+1. En la barra de direcciones de la carpeta (donde dice C:\OVO2\backend), escribe `cmd` y presiona Enter. Se abrirá una ventana negra.
+2. Escribe estos dos comandos (uno por uno):
+   - `npm install` (espera a que terminen de salir letras).
+   - `node server.js`
+3. Si ves un mensaje que dice **"Servidor corriendo en puerto 3000"**, ¡felicidades! El sistema ya está vivo.
+
+---
+
+### PASO 6: ¿Cómo entran los demás desde sus PCs?
+1. En la PC servidor, abre el menú de inicio, escribe `cmd`, abre la ventana y escribe `ipconfig`.
+2. Busca un número que diga **IPv4 Address** (ejemplo: `192.168.1.50`).
+3. Ahora, cualquier compañero desde su propia computadora puede abrir el navegador (Chrome/Edge) y escribir:
+   `http://192.168.1.50:3000`
+4. ¡Y listo! Ya pueden empezar a usar el Gantt.
+
+---
+
+### CONSEJO FINAL: ¿Qué pasa si reinicio la PC?
+Si reinicias la PC, tendrás que hacer el **Paso 5** de nuevo. 
+*Para que sea automático, pídele a alguien de sistemas que instale "PM2" o busca en Google "Cómo crear un acceso directo en la carpeta de Inicio de Windows" para el archivo `server.js`.*
+
+---
+*Manual sencillo creado para facilitar el despliegue de OVO2.*

@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OVOBRAND — Gestión de Proyectos</title>
+  <meta name="description"
+    content="Sistema interactivo de seguimiento de proyectos con diagrama de Gantt, dependencias y persistencia en MySQL.">
+
+  <!-- dhtmlx Gantt (GPL) -->
+  <link rel="stylesheet" href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css">
+  <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="/css/app.css">
+
+  <style>
+    /* ═ Gantt dark theme overrides ═ */
+
+    /* Contenedor principal del Gantt */
+    .gantt_container, .gantt_grid, .gantt_task,
+    .gantt_grid_scale, .gantt_task_scale  {
+      background: #1e1e2f !important;
+      color: #e2e5f0 !important;
+      border-color: #3a3a55 !important;
+    }
+
+    /* Encabezados de escala (días, semanas, meses) */
+    .gantt_scale_cell, .gantt_grid_head_cell {
+      background: #222233 !important;
+      color: #e2e5f0 !important;
+      border-color: #3a3a55 !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+    }
+
+    /* Sábados y domingos con tono distinto */
+    .gantt_scale_cell.weekend, .gantt_task_cell.weekend {
+      background: #1a1a30 !important;
+    }
+    .gantt_scale_cell.saturday, .gantt_task_cell.saturday {
+      background: #1e1e35 !important;
+    }
+
+    /* Filas de tareas */
+    .gantt_row, .gantt_row.gantt_row_task {
+      background: #1e1e2f !important;
+      border-color: #3a3a55 !important;
+      color: #e2e5f0 !important;
+    }
+    .gantt_row:hover, .gantt_row.gantt_row_task:hover {
+      background: #252538 !important;
+    }
+    .gantt_row.odd {
+      background: #222233 !important;
+    }
+    .gantt_row.odd:hover {
+      background: #272742 !important;
+    }
+
+    /* Celdas del área de tareas (fondo de la grilla derecha) */
+    .gantt_task_cell {
+      background: #1e1e2f !important;
+      border-color: #2a2a45 !important;
+    }
+
+    /* Barras de tareas: forzar que el fondo venga del color del task */
+    .gantt_task_line {
+      overflow: hidden;
+      border-radius: 6px !important;
+      border: none !important;
+      color: #fff !important;
+    }
+    /* Texto dentro de la barra siempre blanco */
+    .gantt_task_line .gantt_task_content {
+      color: #fff !important;
+      display: flex !important;
+      align-items: center !important;
+      padding: 0 6px !important;
+    }
+
+    /* Línea de progreso dentro de la barra */
+    .gantt_task_progress {
+      background: rgba(0,0,0,0.25) !important;
+    }
+
+    /* Barra de hoy */
+    .today-marker {
+      background: #22d3ee !important;
+      opacity: 1;
+    }
+
+    /* Líneas de dependencia */
+    .gantt_task_link .gantt_line_wrapper div {
+      background: #6366f199 !important;
+    }
+
+    /* Tooltip */
+    .gantt_tooltip {
+      background: #2a2a3f !important;
+      color: #e2e5f0 !important;
+      border: 1px solid #3a3a55 !important;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+      border-radius: 8px !important;
+      padding: 8px 12px !important;
+      font-size: 12px !important;
+    }
+
+    /* Grilla izquierda: texto de celdas */
+    .gantt_cell_value {
+      color: #e2e5f0 !important;
+    }
+
+    /* Scrollbar del área de gantt */
+    .gantt_ver_scroll, .gantt_hor_scroll {
+      background: #222233 !important;
+    }
+
+    /* Ajuste de altura del encabezado de escala cuando hay día+número */
+    .gantt_scale_cell br {
+      display: block;
+    }
+
+    /* Clases utilitarias de barra */
+    .task-bar-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-bar-resp {
+      background: #ffffff30;
+      border-radius: 50%;
+      width: 18px; height: 18px;
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 700;
+      flex-shrink: 0; margin-left: 4px;
+    }
+    .task-done { opacity: 0.75; }
+    .gantt_link_arrow_right { border-left-color:  #8b8fa8 !important; }
+    .gantt_link_arrow_left  { border-right-color: #8b8fa8 !important; }
+
+    /* ── Export dropdown ─────────────────────────────── */
+    .export-wrapper {
+      position: relative;
+    }
+    .export-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      min-width: 200px;
+      z-index: 500;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-6px);
+      transition: all 0.2s ease;
+      overflow: hidden;
+    }
+    .export-menu.open {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    .export-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s;
+      border: none;
+      background: none;
+      width: 100%;
+      font-family: inherit;
+      text-align: left;
+    }
+    .export-menu-item:hover {
+      background: var(--surface);
+    }
+    .export-menu-item .emi-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .export-menu-item .emi-detail {
+      display: flex;
+      flex-direction: column;
+    }
+    .export-menu-item .emi-label {
+      font-weight: 500;
+    }
+    .export-menu-item .emi-desc {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+    .export-menu-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 2px 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app-layout">
+
+    <!-- ══════════════ SIDEBAR ══════════════ -->
+    <aside class="sidebar collapsed" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <img src="/img/logo.png" class="logo-img" alt="OVOBRAND">
+          <div>
+            <div class="logo-text">OVOBRAND</div>
+            <div class="logo-sub">3MGAS Project Management</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding: 12px 16px;">
+        <div class="new-dropdown-wrapper" style="position:relative;">
+          <button class="btn btn-primary btn-block btn-sm btn-pill" id="btn-new-dropdown">
+            ＋ Nuevo ▼
+          </button>
+          <div class="new-dropdown-menu" id="new-dropdown-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; background:var(--card); border:1px solid var(--indigo); border-radius:var(--radius); box-shadow:var(--shadow-lg); z-index:500; overflow:hidden; flex-direction:column; gap:4px; padding:6px;">
+            <button class="btn btn-primary btn-block btn-sm btn-pill" id="btn-new-task-dropdown" style="justify-content:center;">
+              ＋ Nueva Tarea
+            </button>
+            <button class="btn btn-primary btn-block btn-sm btn-pill" id="btn-new-project" style="justify-content:center;">
+              ＋ Nuevo Proyecto
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-section-title">Proyectos</div>
+      <div class="projects-list" id="project-list">
+        <div style="padding:12px 10px;color:var(--text-dim);font-size:11px">Cargando...</div>
+      </div>
+
+      <div class="sidebar-footer" style="border-top:1px solid var(--border); padding: 16px 12px;">
+        <div id="sidebar-user-info" class="user-card" style="background:var(--card); border:1px solid var(--border-light); border-radius:var(--radius); padding:12px; margin-bottom:12px; display:flex; align-items:center; gap:10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+          <div style="width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg, var(--indigo), var(--cyan)); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; flex-shrink:0;">👤</div>
+          <div style="flex:1; overflow:hidden;">
+            <div id="sidebar-user-name" style="font-size:12px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Usuario</div>
+            <div id="sidebar-role-label" style="font-size:10px; color:var(--amber); font-weight: 500; display:none;">Administrador</div>
+          </div>
+          <div class="user-actions" style="display:flex; gap:4px;">
+            <button class="btn btn-ghost btn-sm icon-only" id="btn-config" title="Ajustes" style="padding:4px; font-size:14px;">👤</button>
+            <button class="btn btn-ghost btn-sm icon-only" id="btn-admin-users" title="Usuarios" style="padding:4px; font-size:14px; display:none;">⚙️</button>
+          </div>
+        </div>
+
+        <button class="btn btn-ghost btn-block btn-sm" id="btn-logout" style="color:var(--red); text-align:left; justify-content:flex-start; padding-left:12px; font-weight:500;">
+          ⏏ Cerrar Sesión
+        </button>
+      </div>
+    </aside>
+
+    <!-- ══════════════ MAIN ══════════════ -->
+    <main class="main-content">
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button class="btn btn-ghost btn-sm" id="btn-toggle-sidebar" title="Ocultar Menú" style="font-size:16px;padding:2px 8px;">≡</button>
+          <h1 class="project-title" id="project-title">MENÚ</h1>
+          <button class="btn btn-ghost btn-sm btn-pill" id="btn-toggle-kpi" title="Mostrar/Ocultar Resumen" style="margin-left: 8px; border:1px solid var(--border-light);">KPI</button>
+          <button class="btn btn-ghost btn-sm btn-pill" id="btn-toggle-grid" title="Bascular Lista de Tareas" style="margin-left: 8px; border:1px solid var(--border-light);">≡ Tareas</button>
+          <span class="project-badge" id="project-badge" style="display:none"></span>
+        </div>
+        <div class="toolbar-right toolbar-actions" id="toolbar-actions" style="display:none">
+          <div class="zoom-group">
+            <button class="btn btn-ghost btn-sm" id="btn-zoom-day" title="Ver por días">D</button>
+            <button class="btn btn-ghost btn-sm" id="btn-zoom-week" title="Ver por semanas">S</button>
+            <button class="btn btn-primary btn-sm active" id="btn-zoom-month" title="Ver por meses">M</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btn-today" title="Ir a hoy">📍 <span>Hoy</span></button>
+          <div class="export-wrapper">
+            <button class="btn btn-ghost btn-sm" id="btn-export" title="Exportar"><span>▼ Exportar</span></button>
+            <div class="export-menu" id="export-menu">
+              <button class="export-menu-item" id="btn-export-pdf">
+                <span class="emi-icon" style="background:#ef444420;color:#ef4444">📄</span>
+                <span class="emi-detail">
+                  <span class="emi-label">Exportar PDF</span>
+                  <span class="emi-desc">Imagen del Gantt completo</span>
+                </span>
+              </button>
+              <div class="export-menu-divider"></div>
+              <button class="export-menu-item" id="btn-export-excel">
+                <span class="emi-icon" style="background:#10b98120;color:#10b981">📊</span>
+                <span class="emi-detail">
+                  <span class="emi-label">Exportar Excel (.xlsx)</span>
+                  <span class="emi-desc">Datos en hoja de cálculo</span>
+                </span>
+              </button>
+              <div class="export-menu-divider"></div>
+              <button class="export-menu-item" id="btn-export-csv">
+                <span class="emi-icon" style="background:#6366f120;color:#6366f1">📋</span>
+                <span class="emi-detail">
+                  <span class="emi-label">Exportar CSV</span>
+                  <span class="emi-desc">Datos separados por punto y coma</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary strip (KPIs) -->
+      <div class="summary-strip hidden-summary">
+        <div class="stat-card stat-card-date">
+          <div class="stat-icon" style="background:#22d3ee20">🚀</div>
+          <div class="stat-info">
+            <div class="stat-label">FECHA DEL PROYECTO</div>
+            <div class="stat-value stat-value-sm" id="stat-fecha-inicio">--</div>
+            <div class="stat-sublabel">Inicio</div>
+          </div>
+        </div>
+        <div class="stat-card stat-card-date">
+          <div class="stat-icon" style="background:#a855f720">🏁</div>
+          <div class="stat-info">
+            <div class="stat-label">FECHA FIN</div>
+            <div class="stat-value stat-value-sm" id="stat-fecha-fin">--</div>
+            <div class="stat-sublabel">Fin proyectada</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#6366f120">📋</div>
+          <div class="stat-info">
+            <div class="stat-label">TOTAL</div>
+            <div class="stat-main-row" style="font-size:16px; font-weight:700; color:var(--text); line-height:1.2;">
+              Tareas: <span id="stat-total-t">0</span>
+            </div>
+            <div class="stat-sub-row" style="font-size:11px; color:var(--text-muted); margin-top:2px;">
+              Subs: <span id="stat-sub-total">0</span>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#10b98120">✅</div>
+          <div class="stat-info">
+            <div class="stat-label">FINALIZADAS</div>
+            <div class="stat-main-row" style="font-size:16px; font-weight:700; color:var(--text); line-height:1.2; white-space: nowrap;">
+              <span id="stat-done">0</span> <span style="font-size:11px;color:var(--text-dim)">/ <span id="stat-total-t-done">0</span></span> <span class="stat-pct" id="stat-done-pct">0%</span>
+            </div>
+            <div class="stat-sub-row" style="font-size:10px; color:var(--text-muted); margin-top:2px; white-space: nowrap;">
+              S: <span id="stat-sub-done">0</span> <span style="color:var(--text-dim)">/ <span id="stat-sub-total-done">0</span></span> <span class="stat-pct" id="stat-sub-done-pct" style="margin-left:2px; padding:1px 4px; font-size:9px;">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#f59e0b20">⚡</div>
+          <div class="stat-info">
+             <div class="stat-label">EN PROGRESO</div>
+             <div class="stat-main-row" style="font-size:16px; font-weight:700; color:var(--text); line-height:1.2; white-space: nowrap;">
+              <span id="stat-progress">0</span> <span style="font-size:11px;color:var(--text-dim)">/ <span id="stat-total-t-prog">0</span></span> <span class="stat-pct" id="stat-progress-pct">0%</span>
+            </div>
+            <div class="stat-sub-row" style="font-size:10px; color:var(--text-muted); margin-top:2px; white-space: nowrap;">
+              S: <span id="stat-sub-prog">0</span> <span style="color:var(--text-dim)">/ <span id="stat-sub-total-prog">0</span></span> <span class="stat-pct" id="stat-sub-progress-pct" style="margin-left:2px; padding:1px 4px; font-size:9px;">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#55587820">⏳</div>
+          <div class="stat-info">
+            <div class="stat-label">PENDIENTES</div>
+            <div class="stat-main-row" style="font-size:16px; font-weight:700; color:var(--text); line-height:1.2; white-space: nowrap;">
+              <span id="stat-pending">0</span> <span style="font-size:11px;color:var(--text-dim)">/ <span id="stat-total-t-pend">0</span></span> <span class="stat-pct" id="stat-pending-pct">0%</span>
+            </div>
+            <div class="stat-sub-row" style="font-size:10px; color:var(--text-muted); margin-top:2px; white-space: nowrap;">
+              S: <span id="stat-sub-pend">0</span> <span style="color:var(--text-dim)">/ <span id="stat-sub-total-pend">0</span></span> <span class="stat-pct" id="stat-sub-pending-pct" style="margin-left:2px; padding:1px 4px; font-size:9px;">0%</span>
+            </div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#8b5cf620">💰</div>
+          <div class="stat-info">
+            <div class="stat-label">COSTO TOTAL</div>
+            <div class="stat-value" id="stat-costo-total">$0</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#10b98120">💳</div>
+          <div class="stat-info">
+            <div class="stat-label">APLICADO</div>
+            <div class="stat-value"><span id="stat-total-aplicado">$0</span> <span class="stat-pct" id="stat-aplicado-pct">0%</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter Bar -->
+      <div class="filter-bar" id="filter-bar" style="display:none">
+        <div class="filter-bar-left" style="width: 100%; display: flex; gap: 8px; align-items:center;">
+          <!-- Row 1 (on mobile) -->
+          <div class="filter-custom-select" style="position:relative;" id="custom-estado-wrapper">
+            <input type="hidden" id="filter-estado" value="">
+            <button class="filter-select" id="btn-filter-estado" style="display:flex;align-items:center;justify-content:center;min-width:100px;">
+              Estado
+            </button>
+            <div class="filter-dropdown-menu" id="menu-filter-estado" style="display:none; position:absolute; top:calc(100% + 4px); left:0; width:130px; background:var(--card); border:1px solid var(--border-light); border-radius:var(--radius); box-shadow:var(--shadow-lg); z-index:500; overflow:hidden; flex-direction:column; gap:2px; padding:6px;">
+               <div class="fd-item filter-select" data-value="" style="padding:4px 8px; cursor:pointer; font-size:11px; background:transparent; border:none; color:var(--text); text-align:left;">Estado (Todos)</div>
+               <div class="fd-item" data-value="En progreso" style="padding:3px; cursor:pointer;"><span class="badge badge-en-progreso" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">En progreso</span></div>
+               <div class="fd-item" data-value="Finalizada" style="padding:3px; cursor:pointer;"><span class="badge badge-finalizada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Finalizada</span></div>
+               <div class="fd-item" data-value="No comenzada" style="padding:3px; cursor:pointer;"><span class="badge badge-no-comenzada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Pendiente</span></div>
+               <div class="fd-item" data-value="Retrasada" style="padding:3px; cursor:pointer;"><span class="badge badge-retrasada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Retrasada</span></div>
+               <div class="fd-item" data-value="Bloqueada" style="padding:3px; cursor:pointer;"><span class="badge badge-bloqueada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Bloqueada</span></div>
+            </div>
+          </div>
+          <select class="filter-select" id="filter-responsable">
+            <option value="">Responsable</option>
+          </select>
+          <select class="filter-select" id="filter-proyecto">
+            <option value="">Proyecto</option>
+          </select>
+          
+          <!-- Row 2 (on mobile) -->
+          <div class="filter-search" style="flex:1;">
+            <span class="filter-search-icon">🔍</span>
+            <input type="text" id="filter-search" placeholder="Buscar..." class="filter-input" style="width:100%">
+          </div>
+          <button class="btn btn-ghost btn-sm btn-pill btn-filter-clear" style="border:1px solid var(--border-light); color:var(--text); font-weight:600; white-space:nowrap;" title="Limpiar filtros">Limpiar Filtros</button>
+        </div>
+      </div>
+
+      <!-- Gantt -->
+      <div id="gantt_here"></div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-state" style="position:absolute;inset:0;top:auto;display:none">
+        <div class="empty-icon">📊</div>
+        <div class="empty-text">Seleccioná un proyecto para ver el Gantt</div>
+      </div>
+
+      <!-- Status Bar (bottom) -->
+      <div class="status-bar hidden-summary" id="status-bar" style="display:none">
+        <div class="status-section status-risk clickable" id="status-click-risk" title="Filtrar Retrasadas">
+          <div class="status-header">
+            <span class="status-title">PROYECTOS EN RIESGO</span>
+          </div>
+          <div class="status-body">
+            <span class="status-number" id="status-risk-count">0</span>
+            <span class="status-icon-alert">⚠️</span>
+          </div>
+          <div class="status-desc" id="status-risk-label">Tareas retrasadas</div>
+        </div>
+        <div class="status-section status-blocked clickable" id="status-click-blocked" title="Filtrar Bloqueadas">
+          <div class="status-header">
+            <span class="status-title">TAREAS BLOQUEADAS</span>
+          </div>
+          <div class="status-body">
+            <span class="status-number" id="status-blocked-count">0</span>
+            <span class="status-icon-alert">🔒</span>
+          </div>
+          <div class="status-desc" id="status-blocked-label">Requieren atención</div>
+        </div>
+        <div class="status-section status-general">
+          <div class="status-header">
+            <span class="status-title">AVANCE GENERAL</span>
+          </div>
+          <div class="status-body">
+            <span class="status-number" id="status-avance">0%</span>
+          </div>
+          <div class="status-progress-bar">
+            <div class="status-progress-fill" id="status-avance-bar" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="status-section status-milestones">
+          <div class="status-header">
+            <span class="status-title">PRÓXIMOS HITOS</span>
+          </div>
+          <div class="status-milestones-list" id="status-milestones">
+            <div class="status-milestone-empty">Sin hitos próximos</div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ══════════════ MODAL: TAREA ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-task">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-task-title">Nueva Tarea</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+
+          <!-- Código -->
+          <div class="form-group col-span-2" id="group-tarea-cod" style="display:none">
+            <label class="form-label" for="field-tarea">Código / Referencia (T00x)</label>
+            <input class="form-control" id="field-tarea" type="text" placeholder="Ej: T001, G15…">
+          </div>
+
+          <!-- Nombre (Es el campo descripcion en la DB) -->
+          <div class="form-group col-span-2">
+            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:4px">
+              <label class="form-label" for="field-descripcion" style="margin-bottom:0">Nombre de la Tarea (Descripción) *</label>
+              <button class="btn btn-ghost btn-sm" id="btn-open-notes-quick" style="padding:0 8px; font-size:10px; color:var(--indigo)">
+                📝 Ver/Agregar Notas de Detalle
+              </button>
+            </div>
+            <textarea class="form-control" id="field-descripcion" rows="2" placeholder="Ej: Cimientos, Instalación eléctrica…"></textarea>
+          </div>
+
+          <!-- Proyecto -->
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-proyecto">Proyecto *</label>
+            <select class="form-control" id="field-proyecto"></select>
+          </div>
+
+          <!-- Tarea Padre (Jerarquía) -->
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-parent">Tarea Padre (opcional para subtareas)</label>
+            <select class="form-control" id="field-parent">
+              <option value="">-- Tarea principal (sin padre) --</option>
+            </select>
+          </div>
+
+          <!-- Fecha inicio -->
+          <div class="form-group">
+            <label class="form-label" for="field-fecha-inicio">Fecha de inicio *</label>
+            <input class="form-control" id="field-fecha-inicio" type="date">
+          </div>
+
+          <!-- Duración -->
+          <div class="form-group">
+            <label class="form-label" for="field-duracion">Duración (días) *</label>
+            <input class="form-control" id="field-duracion" type="number" min="1" value="1">
+          </div>
+
+          <!-- Costo Tarea -->
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-costo">Costo ($) *</label>
+            <input class="form-control" id="field-costo" type="number" min="0" step="0.01" value="0">
+          </div>
+
+          <!-- Tipo días -->
+          <div class="form-group col-span-2">
+            <label class="form-label">Tipo de días</label>
+            <div class="radio-group">
+              <label class="radio-option">
+                <input type="radio" name="tipo_dias" value="calendario" checked>
+                📅 Calendario (incluye domingos)
+              </label>
+              <label class="radio-option">
+                <input type="radio" name="tipo_dias" value="laboral">
+                🗓 Laborales (Lun–Sáb)
+              </label>
+            </div>
+          </div>
+
+          <!-- Responsable -->
+          <div class="form-group col-span-2" style="margin-bottom:0">
+            <label class="form-label" for="field-responsable">Responsable Líder</label>
+            <div style="display:flex;gap:8px">
+              <select class="form-control" id="field-responsable">
+                <option value="">Seleccionar responsable...</option>
+              </select>
+              <button class="btn btn-ghost" id="btn-add-responsable" title="Nuevo Responsable"
+                style="padding:4px 8px">＋</button>
+            </div>
+          </div>
+
+          <!-- Subresponsable (Miembro del equipo) -->
+          <div class="form-group col-span-2" id="group-subresponsable" style="display:none">
+            <label class="form-label" for="field-subresp">Miembro del Equipo (Subresponsable)</label>
+            <div style="display:flex;gap:8px">
+              <select class="form-control" id="field-subresp">
+                <option value="">Seleccionar miembro...</option>
+              </select>
+              <button class="btn btn-ghost" id="btn-add-subresp-quick" title="Nuevo Miembro"
+                style="padding:4px 8px">＋</button>
+            </div>
+          </div>
+
+          <!-- Avance -->
+          <div class="form-group col-span-2">
+            <label class="form-label">Avance: <span id="label-avance">0%</span></label>
+            <div class="progress-wrap">
+              <input class="progress-slider" id="field-avance" type="range" min="0" max="100" step="1" value="0">
+              <span class="progress-value" id="label-avance-r">0%</span>
+            </div>
+          </div>
+
+          <!-- Recursos -->
+          <div class="form-group col-span-2">
+            <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+              Recursos
+              <button class="btn btn-ghost btn-sm" id="btn-add-recurso" title="Nuevo Recurso"
+                style="padding:2px 8px">＋</button>
+            </label>
+            <div id="recursos-wrap" style="display:flex;flex-direction:column;gap:4px;max-height:130px;overflow-y:auto;
+               padding:8px 10px;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius)">
+            </div>
+          </div>
+
+          <!-- Dependencias -->
+          <div class="form-group col-span-2">
+            <label class="form-label">Dependencias (Finish-to-Start)</label>
+            <div id="deps-wrap" style="display:flex;flex-direction:column;gap:4px;max-height:130px;overflow-y:auto;
+               padding:8px 10px;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius)">
+            </div>
+          </div>
+
+          <!-- Es una compra (checkbox) -->
+          <div class="form-group col-span-2">
+            <label class="radio-option" style="margin: 0; cursor:pointer;">
+              <input type="checkbox" id="field-es-compra" name="es_compra">
+              <span>📦 Marcar como compra (para incluir en vista de compras)</span>
+            </label>
+          </div>
+
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger btn-sm" id="btn-delete-task" style="display:none;margin-right:auto">🗑
+          Eliminar</button>
+        <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="btn-save-task">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: PROYECTO ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-project">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-project-title">Nuevo Proyecto</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="field-proj-codigo">Código *</label>
+            <input class="form-control" id="field-proj-codigo" type="text" placeholder="Ej: G12" maxlength="10"
+              style="text-transform:uppercase">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-proj-color">Color</label>
+            <input class="form-control" id="field-proj-color" type="color" value="#6366f1">
+          </div>
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-proj-nombre">Nombre *</label>
+            <input class="form-control" id="field-proj-nombre" type="text" placeholder="Nombre completo del proyecto">
+          </div>
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-proj-desc">Descripción</label>
+            <textarea class="form-control" id="field-proj-desc" rows="2" placeholder="Descripción opcional…"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger btn-sm" id="btn-delete-project" style="display:none;margin-right:auto">🗑
+          Eliminar Proyecto</button>
+        <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="btn-save-project">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: NOTAS ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-notes" style="z-index:105">
+    <div class="modal-box modal-lg">
+      <div class="modal-header">
+        <span class="modal-title">Notas — <span id="notes-task-name"></span></span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="notes-list" id="notes-list"></div>
+        <div class="form-grid">
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-nota">Nueva nota</label>
+            <textarea class="form-control" id="field-nota" rows="3" placeholder="Escribí tu nota aquí…"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-nota-autor">Autor</label>
+            <input class="form-control" id="field-nota-autor" type="text" placeholder="Tu nombre">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-nota-link">Link</label>
+            <input class="form-control" id="field-nota-link" type="url" placeholder="https://…">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal>Cerrar</button>
+        <button class="btn btn-primary" id="btn-save-note">Agregar Nota</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: RESPONSABLE ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-responsable" style="z-index:110">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">Nuevo Responsable</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-resp-nombre">Nombre *</label>
+            <input class="form-control" id="field-resp-nombre" type="text" placeholder="Juan Pérez">
+          </div>
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-resp-correo">Correo *</label>
+            <input class="form-control" id="field-resp-correo" type="email" placeholder="juan@empresa.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-resp-rol">Rol</label>
+            <input class="form-control" id="field-resp-rol" type="text" placeholder="Ej: Jefe">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-resp-equipo">Equipo</label>
+            <input class="form-control" id="field-resp-equipo" type="text" placeholder="Ej: Construcción">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="btn-save-responsable">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: SUBRESPONSABLE ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-subresp">
+    <div class="modal-box" style="max-width:400px">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-subresp-title">Nuevo Miembro del Equipo</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="field-sub-lead-id">
+        <div class="form-group">
+          <label class="form-label" for="field-sub-nombre">Nombre completo *</label>
+          <input class="form-control" id="field-sub-nombre" type="text">
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label class="form-label" for="field-sub-correo">Correo electrónico *</label>
+          <input class="form-control" id="field-sub-correo" type="email">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="btn-save-subresp">Guardar Miembro</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: RECURSO ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-recurso" style="z-index:110">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">Nuevo Recurso</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-rec-nombre">Nombre del recurso *</label>
+            <input class="form-control" id="field-rec-nombre" type="text"
+              placeholder="Ej: Excavadora o Desarrollador Senior">
+          </div>
+          <div class="form-group col-span-2">
+            <label class="form-label" for="field-rec-area">Área</label>
+            <input class="form-control" id="field-rec-area" type="text" placeholder="Ej: Operaciones">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-rec-rol">Rol</label>
+            <input class="form-control" id="field-rec-rol" type="text" placeholder="Ej: Técnico">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="field-rec-valor">Valor Hora</label>
+            <input class="form-control" id="field-rec-valor" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal>Cancelar</button>
+        <button class="btn btn-primary" id="btn-save-recurso">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL: CONFIG ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-config">
+    <div class="modal-box modal-lg">
+      <div class="modal-header">
+        <span class="modal-title">Ajustes</span>
+        <button class="modal-close" data-close-modal>×</button>
+      </div>
+      <div class="modal-body" style="padding:0; min-height: 300px; display:flex; flex-direction:column;">
+        <div style="display:flex; border-bottom:1px solid var(--border);">
+          <button class="btn btn-ghost config-tab active" data-tab="tab-responsables"
+            style="flex:1; border-radius:0; border-bottom:2px solid var(--indigo); border-left:none; border-right:none; border-top:none;">Responsables</button>
+          <button class="btn btn-ghost config-tab" data-tab="tab-recursos"
+            style="flex:1; border-radius:0; border-bottom:2px solid transparent; border-left:none; border-right:none; border-top:none;">Recursos</button>
+        </div>
+
+        <div id="tab-responsables" class="config-tab-content" style="padding:20px 24px; flex:1; overflow-y:auto;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <span style="font-size:12px; font-weight:600; color:var(--text-muted);">Listado de Líderes y Equipos</span>
+            <button class="btn btn-primary btn-sm" id="btn-add-responsable-config" style="padding:4px 10px; font-size:11px;">＋ Nuevo Responsable</button>
+          </div>
+          <div id="config-responsables-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+
+        <div id="tab-recursos" class="config-tab-content hidden" style="padding:20px 24px; flex:1; overflow-y:auto;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <span style="font-size:12px; font-weight:600; color:var(--text-muted);">Inventario de Recursos</span>
+            <button class="btn btn-primary btn-sm" id="btn-add-recurso-config" style="padding:4px 10px; font-size:11px;">＋ Nuevo Recurso</button>
+          </div>
+          <div id="config-recursos-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close-modal>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ LOGIN OVERLAY ══════════════ -->
+  <div class="modal-overlay hidden" id="login-overlay" style="z-index: 9999; background: var(--bg-dark);">
+    <div class="modal-content" style="width: 320px; text-align: left; background: var(--card); border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 30px 24px; box-shadow: var(--shadow-lg);">
+      <div style="font-size:40px; margin-bottom: 8px; text-align: center;">🔐</div>
+      <h3 style="margin-bottom: 24px; font-weight: 600; text-align: center; color: var(--text);">Iniciar Sesión</h3>
+      <form id="form-login" style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" id="login-email" class="form-control" required placeholder="tu@email.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contraseña</label>
+          <input type="password" id="login-password" class="form-control" required placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" style="margin-top: 8px; padding: 10px;">Entrar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL DE USUARIOS ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-users">
+    <div class="modal-box" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Gestión de Usuarios</h3>
+        <button class="btn btn-ghost btn-sm" id="btn-close-users" style="padding:4px 8px">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+        <button class="btn btn-primary btn-sm" id="btn-new-user" style="margin-bottom:12px">＋ Nuevo Usuario</button>
+        <table class="data-table" style="width:100%; text-align:left; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+              <th style="padding:8px">Nombre</th>
+              <th style="padding:8px">Email</th>
+              <th style="padding:8px">Permisos</th>
+              <th style="padding:8px;text-align:right"></th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MODAL CREAR/EDITAR USUARIO ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-user-form">
+    <div class="modal-box" style="max-width: 400px; padding-bottom: 24px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="user-form-title">Usuario</h3>
+        <button class="btn btn-ghost btn-sm" id="btn-close-user-form" style="padding:4px 8px">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-user" style="display: flex; flex-direction: column; gap: 8px;">
+          <input type="hidden" id="user-id">
+          
+          <label class="form-label">Nombre</label>
+          <input type="text" id="user-nombre" class="form-control" required>
+          
+          <label class="form-label">Email</label>
+          <input type="email" id="user-email" class="form-control" required>
+
+          <label class="form-label">Contraseña <span style="font-size:10px;color:gray">(Dejar en blanco para no cambiar)</span></label>
+          <input type="password" id="user-password" class="form-control">
+
+
+          <div style="margin-top:10px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-dark);">
+            <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+              <input type="checkbox" id="user-is-admin" style="accent-color: var(--amber);"> 👑 Es Administrador del Sistema
+            </label>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Puede crear/eliminar usuarios y ver configuraciones maestras.</div>
+          </div>
+
+          <label class="form-label" style="margin-top:10px">Permisos CRUD</label>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+            <label><input type="checkbox" class="user-perm" value="ALL"> ALL</label>
+            <label><input type="checkbox" class="user-perm" value="CREATE"> Crear</label>
+            <label><input type="checkbox" class="user-perm" value="READ"> Leer</label>
+            <label><input type="checkbox" class="user-perm" value="UPDATE"> Editar</label>
+            <label><input type="checkbox" class="user-perm" value="DELETE"> Borrar</label>
+          </div>
+
+          <label class="form-label">Proyectos Autorizados</label>
+          <div id="user-projects-list" style="max-height:100px; background: var(--bg); overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:4px; margin-bottom:12px;">
+            <label style="display:block;"><input type="checkbox" id="user-proj-all" value="ALL"> [ALL] Todos los proyectos</label>
+            <div id="user-proj-checks"></div>
+          </div>
+
+          <div class="form-actions" style="margin-top:20px; justify-content: flex-end; display:flex; gap:8px;">
+            <button type="button" class="btn btn-ghost" id="btn-cancel-user">Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-user">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ══════════════ MODAL DE CONFIRMACIÓN ══════════════ -->
+  <div class="modal-overlay hidden" id="modal-confirm" style="z-index: 10000;">
+    <div class="modal-box" style="max-width: 360px; padding: 24px; text-align: center; border-top: 4px solid var(--red);">
+      <div style="font-size:36px; margin-bottom: 12px; text-shadow: 0 0 10px #ff000050;">⚠️</div>
+      <h3 style="margin-bottom: 8px; font-weight: 600; font-size: 16px; color: var(--text);" id="confirm-title">Confirmación</h3>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 24px; line-height:1.5;" id="confirm-msg"></p>
+      <div style="display:flex; gap:12px; justify-content:center;">
+        <button class="btn btn-ghost" id="btn-confirm-no" style="flex:1; border: 1px solid var(--border);">No, cancelar</button>
+        <button class="btn btn-primary" id="btn-confirm-yes" style="flex:1; background: var(--red); color: white;">Sí, acepto</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/auth.js?v=3"></script>
+  <script src="/js/api.js?v=3"></script>
+  <script src="/js/gantt-init.js?v=3"></script>
+  <script src="/js/exports.js?v=3"></script>
+  <script src="/js/ui.js?v=3"></script>
+</body>
+
+</html>
