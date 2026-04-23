@@ -1,25 +1,27 @@
-# Arquitactura OVO2
+# Arquitectura OVO2 - Gantt Postura
+# name asegura aislamiento total del proyecto Docker
+name: ovo2_gantt
 
 services:
   db:
     image: mysql:8.0
-    container_name: ovo2-db
+    container_name: ovo2-gantt-db
     restart: always
     command: "--host-cache-size=0" # Reemplaza el deprecado --skip-host-cache
     environment:
       MYSQL_ROOT_PASSWORD: ovo_password_2024
       MYSQL_DATABASE: ovo2
     ports:
-      - "3307:3306"
+      - "3507:3306"
     volumes:
-      - ovo2-data:/var/lib/mysql
+      - ovo2-gantt-data:/var/lib/mysql
 
   app:
     build: .
-    container_name: ovo2-app
+    container_name: ovo2-gantt-app
     restart: always
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - DB_HOST=db
       - DB_PORT=3306
@@ -33,7 +35,7 @@ services:
   # 🤖 SERVICIO DE BACKUP AUTOMÁTICO
   backup-cron:
     image: fradelg/mysql-cron-backup:latest
-    container_name: ovo2-backup-cron
+    container_name: ovo2-gantt-backup-cron
     restart: always
     depends_on:
       - db
@@ -49,4 +51,4 @@ services:
       - ./backups:/backup       # Mapeo a carpeta local para fácil acceso
 
 volumes:
-  ovo2-data:
+  ovo2-gantt-data:
