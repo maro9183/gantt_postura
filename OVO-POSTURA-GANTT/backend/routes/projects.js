@@ -26,7 +26,17 @@ router.get('/', async (req, res) => {
 router.get('/:id/tasks', async (req, res) => {
   try {
     const [rows] = await getPool().execute(
-      'SELECT * FROM tareas WHERE id_proyecto = ? ORDER BY fecha_inicio, id_tarea',
+      `SELECT t.*,
+       c.cantidad, c.valor_unitario, c.fecha_solicitud, c.fecha_arribo_necesaria, 
+       c.fecha_oc_emitida, c.fecha_comprometida, c.fecha_entregado,
+       (SELECT COUNT(*) FROM notas n WHERE n.tarea = t.id_tarea) as note_count,
+       sr.nombre as subresponsable_nombre,
+       (SELECT GROUP_CONCAT(id_predecesora ORDER BY id_predecesora) FROM dependencias WHERE id_tarea = t.id_tarea) AS dependencias
+       FROM tareas t
+       LEFT JOIN subresponsables sr ON t.id_subresp = sr.id_subresp
+       LEFT JOIN compras c ON t.id_tarea = c.id_tarea
+       WHERE t.id_proyecto = ?
+       ORDER BY t.fecha_inicio, t.id_tarea`,
       [req.params.id]
     );
     res.json(rows);

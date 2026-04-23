@@ -1,65 +1,97 @@
-const { calcFechaFin, formatDate, parseDate } = require('./dates');
+const { calcFechaFin, calcEstado, formatDate, parseDate } = require('./dates');
 
 /**
  * Calcula el rango de fechas de una tarea padre basándose en sus hijas.
- * Si no tiene hijas, no hace nada (mantiene fechas fijas).
- * Si tiene hijas, ajusta fecha_inicio y fecha_fin del padre.
- * Luego sube recursivamente al abuelo.
+ * Recalcula tanto la capa de Baseline como la capa de Proyectada.
  */
 async function recalcParentBounds(conn, parentId) {
   if (!parentId) return [];
 
   // 1. Obtener todas las hijas directas de este padre
   const [children] = await conn.execute(
-    'SELECT fecha_inicio, fecha_inicio_proyectada, fecha_fin, duracion_dias FROM tareas WHERE id_parent = ?',
+    `SELECT id_tarea, fecha_inicio, fecha_fin, fecha_inicio_proyectada, fecha_fin_proyectada, duracion_dias 
+     FROM tareas WHERE id_parent = ?`,
     [parentId]
   );
 
-  if (children.length === 0) return []; // No tiene hijas, no recalculamos (fechas fijas)
+  if (children.length === 0) return []; 
 
-  // 2. Determinar MIN(inicio) y MAX(fin)
-  let minStart = null;
-  let maxEnd   = null;
+  // 2. Determinar Extremas
+  let minBaseStart = null;
+  let maxBaseEnd   = null;
+  let minProyStart = null;
+  let maxProyEnd   = null;
 
   for (const child of children) {
-    const startStr = child.fecha_inicio_proyectada || child.fecha_inicio;
-    const s = parseDate(startStr);
-    const e = parseDate(child.fecha_fin);
+    // Capa Baseline
+    const csBase = parseDate(child.fecha_inicio);
+    const ceBase = parseDate(child.fecha_fin);
+    if (csBase && (!minBaseStart || csBase < minBaseStart)) minBaseStart = csBase;
+    if (ceBase && (!maxBaseEnd   || ceBase > maxBaseEnd))   maxBaseEnd   = ceBase;
 
-    if (s && (!minStart || s < minStart)) minStart = s;
-    if (e && (!maxEnd   || e > maxEnd))   maxEnd   = e;
+    // Capa Proyectada (Usamos la efectiva: Proyectada || Baseline)
+    const csProy = parseDate(child.fecha_inicio_proyectada || child.fecha_inicio);
+    const ceProy = parseDate(child.fecha_fin_proyectada || child.fecha_fin);
+    if (csProy && (!minProyStart || csProy < minProyStart)) minProyStart = csProy;
+    if (ceProy && (!maxProyEnd   || ceProy > maxProyEnd))   maxProyEnd   = ceProy;
   }
 
-  if (!minStart || !maxEnd) return [];
+  if (!minBaseStart || !maxBaseEnd || !minProyStart || !maxProyEnd) return [];
 
-  const newStartStr = formatDate(minStart);
-  const newEndStr   = formatDate(maxEnd);
+  const nbStart = formatDate(minBaseStart);
+  const nbEnd   = formatDate(maxBaseEnd);
+  const npStart = formatDate(minProyStart);
+  const npEnd   = formatDate(maxProyEnd);
 
-  // 3. Obtener datos actuales del padre para ver si cambió
+  // 3. Obtener datos actuales del padre
   const [pRows] = await conn.execute(
-    'SELECT fecha_inicio, fecha_fin, id_parent, tipo_dias FROM tareas WHERE id_tarea = ?',
+    'SELECT * FROM tareas WHERE id_tarea = ?',
     [parentId]
   );
   if (pRows.length === 0) return [];
   const p = pRows[0];
 
-  // Si no cambiaron las fechas, paramos la recursión
-  if (p.fecha_inicio === newStartStr && p.fecha_fin === newEndStr) return [];
-
-  // Calcular nueva duración del padre (diferencia de días)
-  // Nota: Simplificamos a diferencia calendario para el padre resumen
-  const diffTime = Math.abs(maxEnd - minStart);
+  // Calcular nueva duración del padre (diferencia calendario entre extremos baseline)
+  const diffTime = Math.abs(maxBaseEnd - minBaseStart);
   const newDuration = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+  // Calcular nuevo estado del padre basándose en sus nuevas proyecciones
+  const newStatus = calcEstado({
+    ...p,
+    fecha_inicio: nbStart,
+    fecha_fin: nbEnd,
+    fecha_inicio_proyectada: npStart,
+    fecha_fin_proyectada: npEnd,
+    duracion_dias: newDuration
+  }, false); // Los padres raramente se consideran "bloqueados" individualmente
+
+  // ¿Hubo cambios reales?
+  if (p.fecha_inicio === nbStart && 
+      p.fecha_fin === nbEnd && 
+      p.fecha_inicio_proyectada === npStart && 
+      p.fecha_fin_proyectada === npEnd &&
+      p.estado === newStatus) {
+    return [];
+  }
 
   // 4. Actualizar padre
   await conn.execute(
     `UPDATE tareas 
-     SET fecha_inicio = ?, fecha_fin = ?, duracion_dias = ?, fecha_inicio_proyectada = NULL 
+     SET fecha_inicio = ?, fecha_fin = ?, duracion_dias = ?, 
+         fecha_inicio_proyectada = ?, fecha_fin_proyectada = ?, estado = ? 
      WHERE id_tarea = ?`,
-    [newStartStr, newEndStr, newDuration, parentId]
+    [nbStart, nbEnd, newDuration, npStart, npEnd, newStatus, parentId]
   );
 
-  const affected = [{ id_tarea: parentId, fecha_inicio: newStartStr, fecha_fin: newEndStr }];
+  const affected = [{ 
+    id_tarea: parentId, 
+    fecha_inicio: nbStart, 
+    fecha_fin: nbEnd,
+    duracion_dias: newDuration,
+    fecha_inicio_proyectada: npStart,
+    fecha_fin_proyectada: npEnd,
+    estado: newStatus
+  }];
 
   // 5. Recursión hacia arriba (abuelo)
   const upperAffected = await recalcParentBounds(conn, p.id_parent);

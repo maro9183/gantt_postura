@@ -32,7 +32,7 @@ window.Exports = (() => {
         'Responsable':  raw.responsable || t.responsable || '',
         'Inicio':       fmt(t.start_date),
         'Fin':          t.end_date ? fmt(new Date(t.end_date.getTime() - 86400000)) : '',
-        'Días':         raw.duracion_dias || parseInt(t.duration) || 1,
+        'Días':         parseInt(t.duration) || 1,
         'Tipo Días':    raw.tipo_dias || t._tipo_dias || 'calendario',
         'Avance %':     avance,
         'Estado':       raw.estado || t._estado || '',

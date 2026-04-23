@@ -1,6 +1,22 @@
 /* ============================================================
    UI — Modals, toasts, sidebar, app state
    ============================================================ */
+
+/**
+ * Utility: Parsea una fecha de forma segura soportando strings ISO y objetos Date.
+ * Retorna un objeto Date (en UTC para evitar desfases de zona horaria en inputs).
+ */
+window.parseSafeDate = function(val) {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val !== 'string') return null;
+  const isoMatch = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return new Date(isoMatch[1] + '-' + isoMatch[2] + '-' + isoMatch[3] + 'T00:00:00Z');
+  }
+  return gantt.date.parseDate(val, "xml_date");
+};
+
 window.UI = (() => {
   let projects       = [];
   let responsables   = [];
@@ -13,6 +29,7 @@ window.UI = (() => {
   let editingSubrespId = null;
   let editingRecursoId = null;
   let notesTaskId    = null;
+  let localDepsIds   = []; // Estado local para dependencias antes de guardar
 
   /* ── Toast ─────────────────────────────────────────────── */
   function toast(msg, type = 'info') {
@@ -47,21 +64,16 @@ window.UI = (() => {
     }
     const active = GanttApp.getCurrentProjectId();
     const isAll = active === '__all__';
-    const isCompras = active === '__compras__';
 
     // "Todos los proyectos" item
     let html = `
       <div class="all-projects-item ${isAll ? 'active' : ''}" id="btn-all-projects">
         <span class="all-projects-dot"></span>
         <span class="project-name">MENÚ</span>
-      </div>
-      <div class="all-projects-item ${isCompras ? 'active' : ''}" id="btn-compras-projects" style="background:var(--indigo-glow)">
-        <span class="all-projects-dot" style="background:var(--amber)"></span>
-        <span class="project-name">📦 COMPRAS</span>
       </div>`;
 
     html += projects.map(p => `
-      <div class="project-item ${!isAll && !isCompras && p.id_proyecto == active ? 'active' : ''}"
+      <div class="project-item ${!isAll && p.id_proyecto == active ? 'active' : ''}"
            data-id="${p.id_proyecto}" data-color="${p.color}"
            style="--active-color:${p.color}">
         <span class="project-dot" style="background:${p.color}"></span>
@@ -99,15 +111,13 @@ window.UI = (() => {
     });
     const btnAll = document.getElementById('btn-all-projects');
     if (btnAll) btnAll.addEventListener('click', selectAllProjects);
-    
-    const btnCompras = document.getElementById('btn-compras-projects');
-    if (btnCompras) btnCompras.addEventListener('click', selectCompras);
   }
 
   async function selectAllProjects() {
     document.getElementById('project-title').textContent = 'Cargando...';
     try {
       allTasks = await GanttApp.loadAllProjects();
+      updateActiveViewBtn(document.getElementById('btn-view-tasks'));
       document.getElementById('project-title').textContent = 'MENÚ';
       document.getElementById('project-badge').textContent = '';
       document.getElementById('project-badge').style.display = 'none';
@@ -116,22 +126,11 @@ window.UI = (() => {
     } catch (e) { toast('Error al cargar proyectos', 'error'); console.error(e); }
   }
 
-  async function selectCompras() {
-    document.getElementById('project-title').textContent = 'Cargando...';
-    try {
-      allTasks = await GanttApp.loadCompras();
-      document.getElementById('project-title').textContent = '📦 COMPRAS';
-      document.getElementById('project-badge').textContent = '';
-      document.getElementById('project-badge').style.display = 'none';
-      renderProjectList();
-      showMainUI();
-    } catch (e) { toast('Error al cargar compras', 'error'); console.error(e); }
-  }
-
   async function selectProject(id, color) {
     document.getElementById('project-title').textContent = 'Cargando...';
     try {
       await GanttApp.loadProject(id, color);
+      updateActiveViewBtn(document.getElementById('btn-view-tasks'));
       const p = projects.find(x => x.id_proyecto == id);
       document.getElementById('project-title').textContent = p ? p.nombre_proyecto : 'Proyecto';
       document.getElementById('project-badge').textContent = p ? p.proyecto : '';
@@ -139,11 +138,499 @@ window.UI = (() => {
       document.getElementById('project-badge').style.color = color;
       document.getElementById('project-badge').style.background = color + '22';
 
-      // Tarea: recargar lista para el modal de dependencias
-      allTasks = await API.getProjectTasks(id);
+      // Tarea: ya No recargamos allTasks para el modal; la memoria global persiste.
       renderProjectList();
       showMainUI();
-    } catch (e) { toast('Error al cargar tareas', 'error'); }
+    } catch (e) { toast('Error al cargar tareas', 'error'); console.error('[selectProject] Error:', e); }
+  }
+
+  /* ── View Switching ─────────────────────────────────────── */
+  function updateActiveViewBtn(activeBtn) {
+    const btnTasks = document.getElementById('btn-view-tasks');
+    const btnPurchases = document.getElementById('btn-view-purchases');
+    [btnTasks, btnPurchases].forEach(b => {
+      if(b) {
+        b.classList.remove('btn-primary', 'active');
+        b.classList.add('btn-ghost');
+      }
+    });
+    if(activeBtn) {
+      activeBtn.classList.remove('btn-ghost');
+      activeBtn.classList.add('btn-primary', 'active');
+    }
+  }
+
+  // Event Listeners para cambios de vista
+  document.addEventListener('click', async (e) => {
+    if (e.target.id === 'btn-view-tasks') {
+      updateActiveViewBtn(e.target);
+      const pv = document.getElementById('purchases-view');
+      if (pv) pv.style.display = 'none';
+      window.GanttApp.restoreTasksView();
+    }
+    if (e.target.id === 'btn-view-purchases') {
+      updateActiveViewBtn(e.target);
+      const pv = document.getElementById('purchases-view');
+      if (pv) pv.style.display = 'flex';
+      const [purchases, tasks] = await Promise.all([API.getPurchases(), API.getTasks()]);
+      window.GanttApp.loadPurchasesView(purchases, tasks);
+    }
+    if (e.target.id === 'btn-new-purchase-dropdown') {
+      document.getElementById('new-dropdown-menu').style.display = 'none';
+      // window.PurchaseModule se evalúa en tiempo de ejecución (click), no de definición
+      // Para entonces ya está asignado (el IIFE corrió al cargar el script)
+      if (window.PurchaseModule) window.PurchaseModule.openNewPurchaseModal();
+    }
+    if (e.target.id === 'btn-open-charts') {
+      openChartsModal();
+    }
+  });
+
+  /* ── Purchase Module ──────────────────────────────────────── */
+  const PurchaseModule = (() => {
+
+    // ── Helpers ─────────────────────────────────────────────────
+    const fmt = d => d ? String(d).split('T')[0] : '';
+
+    // Calcula el estado automáticamente según las reglas de negocio
+    function calcEstado(fOc, fEntregado) {
+      if (fEntregado) return { estado: 'entregado',   icon: '🟢', label: 'Entregado' };
+      if (fOc)       return { estado: 'OC emitida',   icon: '🟠', label: 'OC Emitida' };
+      return              { estado: 'solicitada',    icon: '🟡', label: 'Solicitada' };
+    }
+
+    // Actualiza el badge de estado — y el input hidden para que savePurchase lo lea
+    function updateEstadoDisplay() {
+      const fOc  = document.getElementById('field-pur-f-oc').value;
+      const fEnt = document.getElementById('field-pur-f-entregado').value;
+      const { estado, icon, label } = calcEstado(fOc, fEnt);
+
+      document.getElementById('field-pur-estado').value       = estado;
+      document.getElementById('field-pur-estado-icon').textContent  = icon;
+      document.getElementById('field-pur-estado-label').textContent = label;
+
+      // Comprometida obligatoria solo si hay OC
+      const reqSpan = document.getElementById('lbl-comprometida-req');
+      if (reqSpan) reqSpan.style.display = fOc ? 'inline' : 'none';
+    }
+
+    // Construye las opciones de selector de personas (responsables + subresponsables)
+    function buildPersonOptions(selectedId) {
+      let html = '<option value="">Seleccionar...</option>';
+      if (responsables.length) {
+        html += '<optgroup label="Responsables">' +
+          responsables.map(r => `<option value="R-${r.id_resp}" ${r.id_resp == selectedId ? 'selected' : ''}>${r.nombre}</option>`).join('') +
+          '</optgroup>';
+      }
+      if (subresponsables.length) {
+        html += '<optgroup label="Subresponsables">' +
+          subresponsables.map(s => `<option value="S-${s.id_subresp}" ${s.id_subresp == selectedId ? 'selected' : ''}>${s.nombre}</option>`).join('') +
+          '</optgroup>';
+      }
+      return html;
+    }
+
+    // Nuevo helper: Solo responsables (sin equipos/sub) para el campo Responsable de Compra
+    function buildResponsableOnlyOptions(selectedId) {
+      let html = '<option value="">Seleccionar responsable...</option>';
+      if (responsables.length) {
+        html += responsables.map(r => `<option value="${r.id_resp}" ${r.id_resp == selectedId ? 'selected' : ''}>${r.nombre}</option>`).join('');
+      }
+      return html;
+    }
+
+    // Conectar listeners de auto-estado a los campos de fecha
+    function bindEstadoListeners() {
+      ['field-pur-f-oc', 'field-pur-f-entregado'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', updateEstadoDisplay);
+      });
+    }
+
+    // ── Abrir modal: EDITAR compra existente ──────────────────────────
+    async function openPurchaseModal(id) {
+      try {
+        const cleanId = String(id).replace('pur_', '');
+        const p = await API.getPurchase(cleanId);
+        if (!p) return;
+
+        // Título e ID
+        document.getElementById('modal-purchase-title').textContent = `Editar Compra #${p.id_compra}`;
+        document.getElementById('field-pur-id').value = p.id_compra;
+        document.getElementById('btn-delete-purchase').style.display = '';
+
+        // Campos principales
+        document.getElementById('field-pur-producto').value = p.producto || '';
+        document.getElementById('field-pur-notas').value    = p.notas    || '';
+
+        // Proyecto
+        const projSel = document.getElementById('field-pur-proyecto');
+        projSel.innerHTML = '<option value="">Seleccionar proyecto...</option>' +
+          projects.map(pr => `<option value="${pr.id_proyecto}" ${pr.id_proyecto == p.id_proyecto ? 'selected' : ''}>${pr.nombre_proyecto}</option>`).join('');
+
+        // Solicitante (responsables + subresponsables)
+        document.getElementById('field-pur-solicitante').innerHTML = buildPersonOptions(p.id_solicitante);
+
+        // Responsable de Compra (solo responsables principales)
+        document.getElementById('field-pur-responsable').innerHTML = buildResponsableOnlyOptions(p.id_responsable);
+
+        // Cantidades
+        document.getElementById('field-pur-cantidad').value = p.cantidad      || 1;
+        document.getElementById('field-pur-valor').value    = p.valor_unitario || 0;
+
+        // Fechas
+        document.getElementById('field-pur-f-solicitud').value    = fmt(p.fecha_solicitud);
+        document.getElementById('field-pur-f-arribo-nec').value   = fmt(p.fecha_arribo_necesaria);
+        document.getElementById('field-pur-f-oc').value           = fmt(p.fecha_oc_emitida);
+        document.getElementById('field-pur-f-comprometida').value = fmt(p.fecha_comprometida);
+        document.getElementById('field-pur-f-entregado').value    = fmt(p.fecha_entregado);
+
+        // Estado automático
+        updateEstadoDisplay();
+        bindEstadoListeners();
+
+        document.getElementById('modal-purchase').classList.remove('hidden');
+      } catch (e) {
+        console.error(e);
+        toast('Error al cargar datos de la compra', 'error');
+      }
+    }
+
+    // ── Abrir modal: NUEVA compra ──────────────────────────────────
+    function openNewPurchaseModal() {
+      document.getElementById('modal-purchase-title').textContent = 'Nueva Compra';
+      document.getElementById('field-pur-id').value   = '';
+      document.getElementById('btn-delete-purchase').style.display = 'none';
+
+      // Limpiar campos
+      document.getElementById('field-pur-producto').value          = '';
+      document.getElementById('field-pur-notas').value             = '';
+      document.getElementById('field-pur-cantidad').value          = '1';
+      document.getElementById('field-pur-valor').value             = '0';
+      document.getElementById('field-pur-f-arribo-nec').value      = '';
+      document.getElementById('field-pur-f-oc').value              = '';
+      document.getElementById('field-pur-f-comprometida').value    = '';
+      document.getElementById('field-pur-f-entregado').value       = '';
+      document.getElementById('field-pur-f-solicitud').value       = new Date().toISOString().split('T')[0];
+
+      // Proyecto pre-seleccionado
+      const activeProjectId = window.GanttApp ? window.GanttApp.getCurrentProjectId() : '';
+      const projSel = document.getElementById('field-pur-proyecto');
+      projSel.innerHTML = '<option value="">Seleccionar proyecto...</option>' +
+        projects.map(pr => `<option value="${pr.id_proyecto}" ${pr.id_proyecto == activeProjectId ? 'selected' : ''}>${pr.nombre_proyecto}</option>`).join('');
+
+      // Solicitante
+      document.getElementById('field-pur-solicitante').innerHTML = buildPersonOptions(null);
+
+      // Responsable
+      document.getElementById('field-pur-responsable').innerHTML = buildResponsableOnlyOptions(null);
+
+      // Estado inicial
+      updateEstadoDisplay();
+      bindEstadoListeners();
+
+      document.getElementById('modal-purchase').classList.remove('hidden');
+    }
+
+    // ── Guardar (crear o actualizar) ────────────────────────────────
+    async function savePurchase() {
+      const rawId = document.getElementById('field-pur-id').value;
+      const isNew = !rawId;
+      const btn   = document.getElementById('btn-save-purchase');
+      if (btn) btn.disabled = true;
+
+      // Validaciones
+      const producto   = document.getElementById('field-pur-producto').value.trim();
+      const projId     = parseInt(document.getElementById('field-pur-proyecto').value)   || null;
+      const arriboVal  = document.getElementById('field-pur-f-arribo-nec').value;
+      const fOc        = document.getElementById('field-pur-f-oc').value;
+      const fComp      = document.getElementById('field-pur-f-comprometida').value;
+
+      if (!producto) {
+        toast('El nombre de la compra es obligatorio', 'error');
+        if (btn) btn.disabled = false; return;
+      }
+      if (!projId) {
+        toast('Debes seleccionar un Proyecto', 'error');
+        if (btn) btn.disabled = false; return;
+      }
+      const solicitanteVal = document.getElementById('field-pur-solicitante').value;
+      if (!solicitanteVal) {
+        toast('Debes seleccionar un Solicitante', 'error');
+        if (btn) btn.disabled = false; return;
+      }
+      if (!arriboVal) {
+        toast('La Fecha de Arribo Necesario es obligatoria', 'error');
+        if (btn) btn.disabled = false; return;
+      }
+      if (fOc && !fComp) {
+        toast('Si hay Fecha OC, la Fecha Comprometida es obligatoria', 'error');
+        if (btn) btn.disabled = false; return;
+      }
+
+      // Resolver id_solicitante desde el prefijo R-/S-
+      let idSolicitante = null;
+      if (solicitanteVal.startsWith('R-')) idSolicitante = parseInt(solicitanteVal.replace('R-', ''));
+      else if (solicitanteVal.startsWith('S-')) idSolicitante = parseInt(solicitanteVal.replace('S-', ''));
+      else idSolicitante = parseInt(solicitanteVal) || null;
+
+      const payload = {
+        producto,
+        fecha_solicitud:        document.getElementById('field-pur-f-solicitud').value    || null,
+        fecha_arribo_necesaria: arriboVal,
+        id_proyecto:            projId,
+        id_solicitante:         idSolicitante,
+        id_responsable:         parseInt(document.getElementById('field-pur-responsable').value) || null,
+        cantidad:               parseFloat(document.getElementById('field-pur-cantidad').value) || 1,
+        valor_unitario:         parseFloat(document.getElementById('field-pur-valor').value)    || 0,
+        estado:                 document.getElementById('field-pur-estado').value || 'solicitada',
+        fecha_oc_emitida:       fOc   || null,
+        fecha_comprometida:     fComp || null,
+        fecha_entregado:        document.getElementById('field-pur-f-entregado').value || null,
+        notas:                  document.getElementById('field-pur-notas').value.trim() || null
+      };
+
+      // Eliminar solo undefined (null se envía para limpiar campos en la DB)
+      Object.keys(payload).forEach(k => { if (payload[k] === undefined) delete payload[k]; });
+
+      document.getElementById('modal-purchase').classList.add('hidden');
+
+      try {
+        if (isNew) {
+          await API.createPurchase(payload);
+          toast('Compra creada ✅', 'success');
+          const [pur, tks] = await Promise.all([API.getPurchases(), API.getTasks()]);
+          window.GanttApp.loadPurchasesView(pur, tks);
+          
+          // REORDENAMIENTO POST-CREACIÓN (Asíncrono para asegurar renderizado)
+          setTimeout(() => {
+            if (window.gantt) {
+              gantt.sort("start_date", false);
+              gantt.render();
+            }
+          }, 10);
+
+          updateActiveViewBtn(document.getElementById('btn-view-purchases'));
+          const pv = document.getElementById('purchases-view');
+          if (pv) pv.style.display = 'flex';
+          
+        } else {
+          const cleanId = String(rawId).replace('pur_', '');
+          await API.updatePurchase(cleanId, payload);
+          toast('Compra guardada ✅', 'success');
+          window.GanttApp.refreshPurchaseSilently(cleanId, payload);
+        }
+      } catch (e) {
+        console.error('[savePurchase]', e);
+        toast('Error al guardar la compra', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // ── Eliminar ────────────────────────────────────────────────
+    async function deletePurchase() {
+      const id = document.getElementById('field-pur-id').value;
+      if (!id) { toast('ID de compra no encontrado', 'error'); return; }
+
+      // Asegurar que pasamos el ID con prefijo para el Universal Purger
+      const gId = String(id).startsWith('pur_') ? id : `pur_${id}`;
+      
+      // Cerramos el modal de compra primero para no solapar con el confirm
+      document.getElementById('modal-purchase').classList.add('hidden');
+      
+      // Llamamos al purgador universal que maneja confirmación, API y limpieza local
+      await deleteTask(gId);
+    }
+
+    function getResponsableName(id) {
+      if (!id) return '-';
+      const strId = String(id);
+      if (strId.startsWith('R-')) {
+        const rid = parseInt(strId.replace('R-', ''));
+        const r = responsables.find(x => x.id_resp == rid);
+        return r ? r.nombre : strId;
+      }
+      if (strId.startsWith('S-')) {
+        const sid = parseInt(strId.replace('S-', ''));
+        const s = subresponsables.find(x => x.id_subresp == sid);
+        return s ? s.nombre : strId;
+      }
+      const r = responsables.find(x => x.id_resp == id);
+      return r ? r.nombre : id;
+    }
+
+    return { openPurchaseModal, openNewPurchaseModal, savePurchase, deletePurchase, getResponsableName };
+  })();
+  window.PurchaseModule = PurchaseModule; // exponer globalmente para gantt-init.js
+
+  /* ── Charts Logic ────────────────────────────────────────── */
+  let expenseChart = null;
+  let countChart = null;
+
+  async function openChartsModal() {
+    const modal = document.getElementById('modal-charts');
+    if (!modal) return;
+    
+    // Remover clase hidden primero
+    modal.classList.remove('hidden');
+    
+    // Forzar un pequeño reflow y esperar a que el navegador procese el cambio de visibilidad
+    // Esto es CRÍTICO para que los <canvas> tengan dimensiones válidas.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        renderPurchaseCharts();
+      }, 50);
+    });
+  }
+
+  function renderPurchaseCharts() {
+    if (!window.GanttApp) return;
+    // Obtener tareas usando la nueva función exportada
+    const allTasks = window.GanttApp.getAllTasks() || [];
+    
+    // Filtrado robusto (es_compra, _es_compra o tipo compra)
+    const purchases = allTasks.filter(t => t.es_compra || t._es_compra || t.type === 'purchase');
+
+    const summaryContainer = document.getElementById('chart-kpi-summary');
+    if (purchases.length === 0) {
+      if (summaryContainer) summaryContainer.innerHTML = '<div style="color:var(--text-muted); padding:20px; text-align:center; width:100%">No hay datos de compra cargados en este momento.</div>';
+      return;
+    }
+
+    // Agrupar datos por estado
+    const stats = {};
+    const counts = {};
+    purchases.forEach(p => {
+      // Normalizar el estado
+      let state = p._estado || p.estado || 'Pendiente';
+      // Mapeo amigable para el gráfico
+      if (state === 'No comenzada') state = 'Pendiente';
+      
+      const costValue = p._raw?.costo_tarea || p._costo || p._compra?.valor_unitario || 0;
+      const cost = parseFloat(costValue) || 0;
+      
+      stats[state] = (stats[state] || 0) + cost;
+      counts[state] = (counts[state] || 0) + 1;
+    });
+
+    const labels = Object.keys(stats);
+    const dataExpense = Object.values(stats);
+    const dataCount = Object.values(counts);
+
+    // Paleta de colores consistente
+    const colorMap = {
+      'Finalizada': '#10b981',
+      'entregado': '#10b981',
+      'Entregado': '#10b981',
+      'En progreso': '#3b82f6',
+      'OC emitida': '#f59e0b',
+      'Pendiente': '#6366f1',
+      'Bloqueada': '#6b7280',
+      'Retrasada': '#ef4444',
+      'Iniciada Atrasada': '#c30010'
+    };
+    const colors = labels.map(l => colorMap[l] || '#94a3b8');
+
+    // Destruir instancias previas obligatoriamente
+    if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
+    if (countChart) { countChart.destroy(); countChart = null; }
+
+    try {
+      const canvasExp = document.getElementById('chart-expense-by-state');
+      const canvasCount = document.getElementById('chart-count-by-state');
+      
+      if (!canvasExp || !canvasCount) return;
+
+      const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { 
+            position: 'bottom', 
+            labels: { color: '#e2e5f0', padding: 15, font: { size: 10, weight: '600' } } 
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                let value = context.raw;
+                if (context.datasetIndex === 0 && context.chart.canvas.id === 'chart-expense-by-state') {
+                  return ' Gasto: $' + value.toLocaleString();
+                }
+                return ' Cantidad: ' + value;
+              }
+            }
+          }
+        }
+      };
+
+      expenseChart = new Chart(canvasExp.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: dataExpense,
+            backgroundColor: colors,
+            borderWidth: 2,
+            borderColor: '#1e1e2f',
+            hoverOffset: 15
+          }]
+        },
+        options: commonOptions
+      });
+
+      countChart = new Chart(canvasCount.getContext('2d'), {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: dataCount,
+            backgroundColor: colors,
+            borderWidth: 2,
+            borderColor: '#1e1e2f',
+            hoverOffset: 15
+          }]
+        },
+        options: commonOptions
+      });
+
+      // KPI Summary (Alertas de Atraso)
+      const today = new Date(); today.setHours(0,0,0,0);
+      
+      const delayedCount = purchases.filter(p => {
+         const s = p._estado || '';
+         if (s === 'Finalizada' || s === 'Entregado' || s === 'entregado') return false;
+         
+         const fNecStr = p._compra?.f_arribo_nec || p._raw?.f_arribo_nec;
+         if (!fNecStr) return false;
+         
+         const fNec = new Date(fNecStr + 'T00:00:00');
+         return fNec < today;
+      }).length;
+
+      const noOCCount = purchases.filter(p => {
+        const s = p._status || p._estado || '';
+        if (s === 'Finalizada' || s === 'Entregado') return false;
+        return !p._compra?.f_oc && !p._raw?.f_oc;
+      }).length;
+
+      if (summaryContainer) {
+        summaryContainer.innerHTML = `
+          <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); padding:16px; border-radius:12px; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+            <div style="font-size:10px; color:var(--text-muted); font-weight:700; text-transform:uppercase; margin-bottom:4px">Atrasos Críticos</div>
+            <div style="font-size:32px; font-weight:900; color:#ef4444; text-shadow:0 0 10px rgba(239,68,68,0.3)">${delayedCount}</div>
+            <div style="font-size:10px; color:#ef444499">Vencidos o fuera de plazo</div>
+          </div>
+          <div style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.2); padding:16px; border-radius:12px; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+            <div style="font-size:10px; color:var(--text-muted); font-weight:700; text-transform:uppercase; margin-bottom:4px">Compras sin OC</div>
+            <div style="font-size:32px; font-weight:900; color:#f59e0b; text-shadow:0 0 10px rgba(245,158,11,0.3)">${noOCCount}</div>
+            <div style="font-size:10px; color:#f59e0b99">Pendientes de gestión</div>
+          </div>
+        `;
+      }
+    } catch (err) {
+      console.error("[renderPurchaseCharts] Error:", err);
+    }
   }
 
   function showMainUI() {
@@ -185,7 +672,7 @@ window.UI = (() => {
   }
 
   /* ── Task Modal ─────────────────────────────────────────── */
-  function openTaskModal(param) {
+  async function openTaskModal(param) {
     // param puede ser id (number) o ganttTask (object del dhtmlx)
     let task_id = null;
     let ganttTask = null;
@@ -197,74 +684,93 @@ window.UI = (() => {
     }
 
     editingTaskId = task_id;
-    const raw = editingTaskId ? allTasks.find(t => t.id_tarea == editingTaskId) : null;
+    const raw = editingTaskId ? allTasks.find(t => t.id == editingTaskId) : null;
     
     document.getElementById('modal-task-title').textContent = editingTaskId ? 'Editar Tarea' : 'Nueva Tarea';
     document.getElementById('btn-delete-task').style.display = editingTaskId ? 'block' : 'none';
 
     const f = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
 
-    f('field-tarea',       raw?.tarea        || '');
-    f('field-descripcion', raw?.descripcion  || '');
-    f('field-costo',       raw?.costo_tarea  || 0);
+    // Mapeo Estricto según Extracción de DOM
+    f('field-descripcion', raw?.descripcion || ganttTask?.descripcion || ganttTask?.text || '');
+    f('field-costo',       parseFloat(raw?.costo_tarea || ganttTask?.costo_tarea || 0));
+    f('field-costo-real',  parseFloat(raw?.costo_real || ganttTask?._costo_real || 0));
 
-    // Fecha inicio: priorizar drag del gantt si existe
-    let startVal = raw?.fecha_inicio || today();
+    // Fecha inicio (Baseline - Plan Original)
+    // EXCLUSIVO de DB o alias persistente. NUNCA del start_date visual.
+    let baselineVal = raw?.fecha_inicio || ganttTask?._f_inicio_base || today();
+    f('field-fecha-inicio', baselineVal);
+    
+    // Fecha inicio Proyectada (Visual)
+    // Refleja exactamente dónde está la barra en el Gantt
+    let visualStart = baselineVal;
     if (ganttTask && ganttTask.start_date) {
-      startVal = gantt.date.date_to_str('%Y-%m-%d')(ganttTask.start_date);
+      visualStart = gantt.date.date_to_str('%Y-%m-%d')(ganttTask.start_date);
     }
-    f('field-fecha-inicio', startVal);
+    f('field-fecha-inicio-proyectada', raw?.fecha_inicio_proyectada || ganttTask?._f_inicio_proy || visualStart);
+    f('field-fecha-fin-proyectada',    raw?.fecha_fin_proyectada || ganttTask?._f_fin_proy || '');
+    f('field-fecha-real-iniciada',     raw?.fecha_real_iniciada || ganttTask?._f_real_ini || '');
+    f('field-fecha-completada',        raw?.fecha_completada || ganttTask?._f_real_fin || '');
 
-    // Duración: priorizar drag del gantt
-    let durVal = raw?.duracion_dias || 1;
-    if (ganttTask && ganttTask.start_date && ganttTask.end_date) {
-      let bDays = 0;
-      let cd = new Date(ganttTask.start_date);
-      let ed = new Date(ganttTask.end_date);
-      while (cd < ed) {
-        if (raw?.tipo_dias !== 'laboral' || cd.getDay() !== 0) bDays++;
-        cd.setDate(cd.getDate() + 1);
-      }
-      durVal = Math.max(1, bDays);
-    }
+    // Permisos Baseline (Solo Admin edita)
+    const isAdmin = window.Auth && window.Auth.getUser()?.es_admin;
+    const isEditing = !!editingTaskId;
+    document.getElementById('field-fecha-inicio').disabled = (!isAdmin && isEditing);
+    // document.getElementById('field-duracion').disabled = (!isAdmin && isEditing); // La duración permitimos editarla para desplazar la proyección
+
+    // Duración: protegida mediante alias duracion_estricta para evitar hijacking de DHTMLX
+    // Soporta raw (duracion_dias) y mapped (duration)
+    const durVal = raw?.duracion_dias || raw?.duration || ganttTask?.duracion_estricta || 1;
     f('field-duracion', durVal);
 
     // Avance
-    const avance = parseFloat(raw?.avance || 0);
+    const pAvance = ganttTask?.progress != null ? ganttTask.progress * 100 : 0;
+    const avance  = parseFloat(raw?.avance || raw?.progress || pAvance || 0);
     f('field-avance', avance);
     document.getElementById('label-avance').textContent = `${Math.round(avance)}%`;
     document.getElementById('label-avance-r').textContent = `${Math.round(avance)}%`;
 
     // Proyecto
     const projSel = document.getElementById('field-proyecto');
+    const safeProjId = raw?.id_proyecto || ganttTask?.id_proyecto || GanttApp.getCurrentProjectId() || projects[0]?.id_proyecto || '';
     projSel.innerHTML = projects.map(p =>
-      `<option value="${p.id_proyecto}" ${raw?.id_proyecto == p.id_proyecto ? 'selected' : ''}>${p.nombre_proyecto}</option>`
+      `<option value="${p.id_proyecto}" ${safeProjId == p.id_proyecto ? 'selected' : ''}>${p.nombre_proyecto}</option>`
     ).join('');
-    if (!editingTaskId) projSel.value = GanttApp.getCurrentProjectId() || projects[0]?.id_proyecto || '';
+    projSel.value = safeProjId;
 
     // Tarea Padre (Filtrada por proyecto)
     function updateParentSelect(projectId, selectedParentId = null) {
       const parentSel = document.getElementById('field-parent');
       parentSel.innerHTML = '<option value="">-- Tarea principal (sin padre) --</option>';
-      allTasks.forEach(t => {
-        if (editingTaskId && t.id_tarea == editingTaskId) return;
-        if (t.id_proyecto != projectId) return; // SOLO TAREAS DEL MISMO PROYECTO
+      
+      // Usar el iterador oficial de DHTMLX para asegurar compatibilidad y evitar TypeErrors
+      gantt.eachTask(t => {
+        // Ignorar la propia tarea para evitar autoreferencia
+        if (editingTaskId && t.id == editingTaskId) return;
+        // Ignorar compras (prefixed with pur_) ya que no deben ser padres de obra
+        if (String(t.id).startsWith('pur_')) return;
         
+        // FILTRO POR PROYECTO: Solo mostrar tareas del mismo proyecto
+        const tProjId = t.id_proyecto || (t._raw ? t._raw.id_proyecto : null);
+        if (projectId && tProjId && tProjId != projectId) return;
+
         const opt = document.createElement('option');
-        opt.value = t.id_tarea;
-        opt.textContent = t.descripcion || "(Sin nombre)";
+        opt.value = t.id;
+        opt.textContent = t.text || t.tarea || "(Sin nombre)";
         parentSel.appendChild(opt);
       });
       parentSel.value = selectedParentId || '';
     }
 
     const currentProjId = raw?.id_proyecto || projSel.value;
-    updateParentSelect(currentProjId, raw?.id_parent);
+    // Soporta tanto raw.id_parent como ganttTask.parent (DHTMLX name)
+    const currentParentId = raw?.id_parent || ganttTask?.parent || 0;
+    updateParentSelect(currentProjId, currentParentId);
 
     const parentSel = document.getElementById('field-parent');
-    parentSel.onchange = () => {
+    parentSel.onchange = async () => {
       const pId = parentSel.value;
-      renderDependenciasSelect('', projSel.value, pId);
+      await renderDependenciasSelect('');
       
       // Herencia de responsable y equipo desde el padre
       if (pId) {
@@ -305,20 +811,60 @@ window.UI = (() => {
     const tipo = raw?.tipo_dias || 'calendario';
     document.querySelectorAll('input[name="tipo_dias"]').forEach(r => { r.checked = r.value === tipo; });
 
-    // Es compra
-    const esCompra = raw?.es_compra || 0;
-    document.getElementById('field-es-compra').checked = esCompra ? true : false;
-
     renderRecursosSelect(raw?.recursos || '');
-    renderDependenciasSelect(raw?.dependencias || '', projSel.value, raw?.id_parent || '');
     
-    projSel.onchange = () => {
-      renderDependenciasSelect('', projSel.value, '');
-      updateParentSelect(projSel.value, ''); // Actualizar padres al cambiar proyecto
-    };
-
+    // Inicializar estado local de dependencias
+    localDepsIds = (raw?.dependencias || '').split(',').map(d => d.trim()).filter(Boolean);
+    renderDependenciasList();
+    
     document.getElementById('modal-task').classList.remove('hidden');
-    document.getElementById('field-tarea').focus();
+    document.getElementById('field-descripcion').focus();
+
+    // Mostrar/ocultar la sección de compras y cargarlas si hay tarea existente
+    const purGroup = document.getElementById('group-task-purchases');
+    if (purGroup) {
+      purGroup.style.display = editingTaskId ? 'block' : 'none';
+      if (editingTaskId) {
+        // La gestión de compras ahora se maneja de forma independiente
+        // PurchaseModule.renderTaskPurchases(editingTaskId); // ELIMINADO: Evita TypeError
+      }
+    }
+    
+    // Forzar sincronización de proyecciones inicial
+    syncModalProjections();
+  }
+
+  /**
+   * RECALCULO EN VIVO (Frontend UX Refactor)
+   * Replica la lógica del backend: Fin = InicioEfectivo + Duración - 1
+   */
+  function syncModalProjections() {
+    const fieldIniProy = document.getElementById('field-fecha-inicio-proyectada');
+    const fieldIniBase = document.getElementById('field-fecha-inicio');
+    const fieldRealIni = document.getElementById('field-fecha-real-iniciada');
+    const fieldDur     = document.getElementById('field-duracion');
+    const fieldFinProy = document.getElementById('field-fecha-fin-proyectada');
+
+    if (!fieldFinProy) return;
+
+    // 1. Determinar Inicio Efectivo (Prioridad: Real > Proyectada > Baseline)
+    let startStr = fieldRealIni?.value || fieldIniProy?.value || fieldIniBase?.value;
+    if (!startStr) return;
+
+    // 2. Obtener Duración
+    const duration = parseInt(fieldDur?.value) || 1;
+
+    // 3. Calcular Fin
+    // Usamos T00:00:00Z para evitar desfases de zona horaria local
+    const startDate = new Date(startStr + 'T00:00:00Z');
+    if (isNaN(startDate.getTime())) return;
+
+    // Matemática: d + duration - 1
+    const endDate = new Date(startDate.getTime());
+    endDate.setUTCDate(endDate.getUTCDate() + duration - 1);
+
+    // 4. Inyectar en el campo interactivo
+    fieldFinProy.value = endDate.toISOString().split('T')[0];
   }
 
   function updateSubrespSelect(leadId, selectedId = null) {
@@ -336,54 +882,149 @@ window.UI = (() => {
       wrap.innerHTML = '<span style="color:var(--text-dim);font-size:11px">No hay recursos cargados</span>';
       return;
     }
-    wrap.innerHTML = recursos.map(r => `
-      <label class="radio-option" style="margin-bottom:4px;cursor:pointer;font-size:11px">
-        <input type="checkbox" name="rec_check" value="${r.id_recurso}" ${selIds.includes(String(r.id_recurso)) ? 'checked' : ''}>
-        <span>${r.nombre}</span>
-      </label>`).join('');
+    const options = recursos.map(r => `
+      <option value="${r.id_recurso}" ${selIds.includes(String(r.id_recurso)) ? 'selected' : ''}>${escHtml(r.nombre)}</option>
+    `).join('');
+    wrap.innerHTML = `<select class="form-control" style="height:110px; padding:4px" multiple>${options}</select>`;
   }
 
-  function renderDependenciasSelect(selected, projectId, parentId) {
+  function renderDependenciasList() {
     const wrap = document.getElementById('deps-wrap');
-    const selIds = (selected || '').split(',').map(d => d.trim()).filter(Boolean);
-    const pId = parentId ? parseInt(parentId) : null;
-    
-    const available = allTasks.filter(t => 
-      t.id_tarea != editingTaskId && 
-      t.id_proyecto == projectId &&
-      (t.id_parent == pId || (!t.id_parent && !pId))
-    );
-    if (!available.length) {
-      wrap.innerHTML = '<span style="color:var(--text-dim);font-size:11px">No hay otras tareas en este nivel</span>';
+    if (!localDepsIds.length) {
+      wrap.innerHTML = '<div style="color:var(--text-dim);font-size:11px;text-align:center;padding:10px;">Sin dependencias.</div>';
       return;
     }
-    wrap.innerHTML = available.map(t => `
-      <label class="radio-option" style="margin-bottom:4px;cursor:pointer">
-        <input type="checkbox" name="dep_check" value="${t.id_tarea}" ${selIds.includes(String(t.id_tarea)) ? 'checked' : ''}>
-        <span>${t.descripcion || t.tarea}</span>
-      </label>`).join('');
+
+    let html = '';
+    localDepsIds.forEach(id => {
+      // Intentamos buscar la tarea en allTasks o directamente en el motor del Gantt si existe
+      let t = allTasks.find(x => x.id == id);
+      if (!t && window.gantt && gantt.isTaskExists(id)) {
+        t = gantt.getTask(id);
+      }
+
+      if (t) {
+        const proj = projects.find(p => p.id_proyecto == t.id_proyecto);
+        const dotColor = proj ? proj.color : '#94a3b8';
+        html += `
+          <div class="dep-row" data-id="${id}">
+            <div class="dep-row-info">
+              <div class="dep-row-name">
+                <span class="dep-dot" style="background:${dotColor}"></span>
+                ${t.text || t.tarea || 'Tarea'}
+              </div>
+              <div class="dep-row-proj">${proj ? proj.nombre_proyecto : 'Proyecto Externo'}</div>
+            </div>
+            <button type="button" class="btn-remove-dep" title="Quitar dependencia">×</button>
+          </div>
+        `;
+      }
+    });
+    wrap.innerHTML = html;
+
+    // Listeners de borrado
+    wrap.querySelectorAll('.btn-remove-dep').forEach(btn => {
+      btn.onclick = (e) => {
+        const id = e.target.closest('.dep-row').dataset.id;
+        localDepsIds = localDepsIds.filter(x => x != id);
+        renderDependenciasList();
+      };
+    });
+  }
+
+  function openAddDepModal() {
+    const modal = document.getElementById('modal-add-dependency');
+    const projSel = document.getElementById('add-dep-project');
+    const taskSel = document.getElementById('add-dep-task');
+
+    // Poblar proyectos únicos desde la memoria global de tareas
+    // O mejor, desde la lista de proyectos global que ya tenemos
+    projSel.innerHTML = '<option value="">-- Seleccionar Proyecto --</option>';
+    projects.forEach(p => {
+      projSel.innerHTML += `<option value="${p.id_proyecto}">${p.nombre_proyecto}</option>`;
+    });
+
+    taskSel.innerHTML = '<option value="">-- Elige un proyecto primero --</option>';
+    taskSel.disabled = true;
+
+    projSel.onchange = () => {
+      const pId = projSel.value;
+      if (!pId) {
+        taskSel.innerHTML = '<option value="">-- Elige un proyecto primero --</option>';
+        taskSel.disabled = true;
+        return;
+      }
+
+      // Filtrar tareas por proyecto desde el catálogo GLOBAL en memoria (allTasks)
+      const filtered = allTasks.filter(t => 
+        (t.id_proyecto || t._raw?.id_proyecto) == pId && 
+        (t.id || t.id_tarea) != editingTaskId &&
+        !localDepsIds.includes(String(t.id || t.id_tarea))
+      );
+
+      taskSel.innerHTML = filtered.length 
+        ? '<option value="">-- Seleccionar Tarea --</option>' + filtered.map(t => `<option value="${t.id || t.id_tarea}">${t.text || t.tarea}</option>`).join('')
+        : '<option value="">No hay tareas disponibles</option>';
+      taskSel.disabled = false;
+    };
+
+    modal.classList.remove('hidden');
+  }
+
+  function confirmAddDep() {
+    const taskSel = document.getElementById('add-dep-task');
+    const val = taskSel.value;
+    if (!val) { toast('Selecciona una tarea', 'error'); return; }
+
+    if (!localDepsIds.includes(String(val))) {
+      localDepsIds.push(String(val));
+      renderDependenciasList();
+    }
+    document.getElementById('modal-add-dependency').classList.add('hidden');
+  }
+
+  function toIsoDate(val) {
+    if (!val) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    // Manejo de DD/MM/YYYY si el input no es nativo date o devuelve otro formato
+    const parts = val.split('/');
+    if (parts.length === 3) {
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2];
+      if (year.length === 4) return `${year}-${month}-${day}`;
+    }
+    return val;
   }
 
   function getFormData() {
     const tipoDias = document.querySelector('input[name="tipo_dias"]:checked')?.value || 'calendario';
-    const depIds   = [...document.querySelectorAll('input[name="dep_check"]:checked')].map(c => c.value);
-    const recIds   = [...document.querySelectorAll('input[name="rec_check"]:checked')].map(c => c.value);
-    const esCompra = document.getElementById('field-es-compra')?.checked ? 1 : 0;
+    
+    // Captura específica por contenedor para evitar errores si cambia el orden del DOM
+    const recSelect = document.querySelector('#recursos-wrap select');
+    const recIds = recSelect ? Array.from(recSelect.selectedOptions).map(o => o.value) : [];
+    
     return {
-      id_proyecto:   +document.getElementById('field-proyecto').value,
-      id_parent:     document.getElementById('field-parent').value ? +document.getElementById('field-parent').value : null,
-      id_subresp:    document.getElementById('field-subresp').value ? +document.getElementById('field-subresp').value : null,
-      tarea:          document.getElementById('field-tarea').value.trim() || document.getElementById('field-descripcion').value.trim().substring(0, 50),
-      descripcion:    document.getElementById('field-descripcion').value.trim() || null,
-      fecha_inicio:   document.getElementById('field-fecha-inicio').value,
-      duracion_dias:  +document.getElementById('field-duracion').value || 1,
-      costo_tarea:    +document.getElementById('field-costo').value || 0,
-      responsable:    document.getElementById('field-responsable').value.trim() || null,
-      recursos:       recIds.join(',') || null,
-      tipo_dias:      tipoDias,
-      avance:         +document.getElementById('field-avance').value,
-      dependencias:   depIds.join(',') || null,
-      es_compra:      esCompra
+      id_proyecto:         +document.getElementById('field-proyecto').value,
+      id_parent:           document.getElementById('field-parent').value ? +document.getElementById('field-parent').value : 0,
+      id_subresp:          document.getElementById('field-subresp').value ? +document.getElementById('field-subresp').value : null,
+      tarea:               document.getElementById('field-descripcion').value.trim().substring(0, 50),
+      descripcion:         document.getElementById('field-descripcion').value.trim() || null,
+      fecha_inicio:        toIsoDate(document.getElementById('field-fecha-inicio').value),
+      duration:            +document.getElementById('field-duracion').value || 1,
+      fecha_real_iniciada: toIsoDate(document.getElementById('field-fecha-real-iniciada')?.value) || null,
+      fecha_completada:    toIsoDate(document.getElementById('field-fecha-completada')?.value) || null,
+      fecha_inicio_proyectada: toIsoDate(document.getElementById('field-fecha-inicio-proyectada')?.value) || null,
+      fecha_fin_proyectada:    toIsoDate(document.getElementById('field-fecha-fin-proyectada')?.value) || null,
+      costo_tarea:         parseFloat(document.getElementById('field-costo').value) || 0,
+      costo_real:          parseFloat(document.getElementById('field-costo-real').value) || 0,
+      responsable:         document.getElementById('field-responsable').value.trim() || null,
+      recursos:            recIds.join(',') || null,
+      tipo_dias:           tipoDias,
+      avance:              +document.getElementById('field-avance').value,
+      dependencias:        localDepsIds.join(',') || null,
+      es_compra:           0,
+      compraData:          null
     };
   }
 
@@ -395,19 +1036,86 @@ window.UI = (() => {
     btn.disabled = true;
     try {
       if (editingTaskId) {
-        const r = await API.updateTask(editingTaskId, data);
-        allTasks = allTasks.map(t => t.id_tarea == editingTaskId ? r.task : t);
-        GanttApp.applyAllUpdated(r.updatedTasks);
-        toast('Tarea actualizada', 'success');
+        // ACTUALIZACIÓN: Mapear datos a la memoria del Gantt y disparar el DataProcessor
+        if (!gantt.isTaskExists(editingTaskId)) {
+           toast('Tarea no encontrada en memoria', 'error');
+           return;
+        }
+        
+        const gt = gantt.getTask(editingTaskId);
+        gt.text = data.descripcion || data.tarea;
+        gt.start_date = gantt.date.parseDate(data.fecha_inicio, "xml_date");
+        
+        // Sincronización de duración (Protocol Translator: el frontend solo habla 'duration')
+        gt.duration = data.duration;
+        delete gt.end_date; // Forzar recalculo visual
+
+        gt.progress = (data.avance || 0) / 100;
+        
+        // Sincronización de campos custom
+        // Sincronización de jerarquía (Dual-Key Sync)
+        gt.id_parent = data.id_parent;
+        gt.parent    = data.id_parent || 0;
+        gt.fecha_inicio = data.fecha_inicio;
+        gt._f_inicio_base = data.fecha_inicio;
+        // Preservar estado actual si no viene en el form del modal (el modal de tareas no tiene selector de estado aún)
+        gt.estado = data.estado || gt.estado || 'sin iniciar';
+        gt.tipo_dias = data.tipo_dias;
+        gt.dependencias = data.dependencias;
+        gt.es_compra = 0;
+        // --- MAPEO FALTANTE QUE NO VIAJABA ---
+        gt.costo_tarea = data.costo_tarea;
+        gt.responsable = data.responsable;
+        gt.id_subresp = data.id_subresp;
+        gt.recursos = data.recursos;
+        gt.fecha_real_iniciada = data.fecha_real_iniciada;
+        gt.fecha_completada = data.fecha_completada;
+        gt.fecha_inicio_proyectada = data.fecha_inicio_proyectada;
+        gt.fecha_fin_proyectada = data.fecha_fin_proyectada;
+        gt._costo_real = data.costo_real;
+
+        // DISPARAR DATA PROCESSOR (action: "update")
+        gantt.updateTask(editingTaskId);
+        setTimeout(() => {
+          gantt.sort("start_date", false);
+          gantt.render();
+        }, 10);
+        toast('Sincronizando cambios...', 'info');
       } else {
-        const r = await API.createTask(data);
-        allTasks.push(r.task);
-        if (r.task.id_proyecto == GanttApp.getCurrentProjectId()) GanttApp.addTask(r.task);
-        toast('Tarea creada', 'success');
+        // CREACIÓN: Usar gantt.addTask para que el DataProcessor intercepte (action: "create")
+        const newTask = {
+          text: data.descripcion || data.tarea,
+          start_date: gantt.date.parseDate(data.fecha_inicio, "xml_date"),
+          duration: data.duration,
+          progress: (data.avance || 0) / 100,
+          id_proyecto: data.id_proyecto,
+          id_parent: data.id_parent,
+          fecha_inicio: data.fecha_inicio,
+          estado: data.es_compra ? 'solicitada' : (data.estado || 'sin iniciar'),
+          tipo_dias: data.tipo_dias,
+          dependencias: data.dependencias,
+          es_compra: 0,
+          costo_tarea: data.costo_tarea,
+          costo_real: data.costo_real,
+          responsable: data.responsable,
+          recursos: data.recursos,
+          id_subresp: data.id_subresp,
+          fecha_real_iniciada: data.fecha_real_iniciada,
+          fecha_completada: data.fecha_completada
+        };
+
+        // DISPARAR DATA PROCESSOR (action: "create")
+        gantt.addTask(newTask, data.id_parent || 0);
+        setTimeout(() => {
+          gantt.sort("start_date", false);
+          gantt.render();
+        }, 10);
+        toast('Creando tarea...', 'info');
       }
       closeTaskModal();
     } catch (e) {
-      toast(e.error || 'Error al guardar', 'error');
+      console.error(e);
+      toast('Error al procesar la tarea', 'error');
     } finally { btn.disabled = false; }
   }
 
@@ -424,10 +1132,22 @@ window.UI = (() => {
       document.getElementById('confirm-msg').textContent = msg;
       
       const btnYes = document.getElementById('btn-confirm-yes');
+      const btnNo  = document.getElementById('btn-confirm-no');
+      
       btnYes.textContent = btnText;
       
-      btnYes.onclick = () => { overlay.classList.add('hidden'); resolve(true); };
-      document.getElementById('btn-confirm-no').onclick = () => { overlay.classList.add('hidden'); resolve(false); };
+      // Cleanup de listeners previos usando onclick (fuente única de verdad)
+      btnYes.onclick = () => {
+        console.log("[Confirm] Respuesta: SÍ");
+        overlay.classList.add('hidden');
+        resolve(true);
+      };
+      
+      btnNo.onclick = () => {
+        console.log("[Confirm] Respuesta: NO");
+        overlay.classList.add('hidden');
+        resolve(false);
+      };
       
       overlay.classList.remove('hidden');
     });
@@ -435,19 +1155,91 @@ window.UI = (() => {
 
   /* ── Delete confirmation ────────────────────────────────── */
   async function confirmDelete(taskId) {
-    const agreed = await showConfirm('Eliminar Tarea', '¿Eliminar esta tarea? Esta acción no se puede deshacer.', 'Sí, eliminar');
-    if (!agreed) return;
-    deleteTask(taskId);
+    console.log("[UI] Iniciando flujo de eliminación para ID:", taskId);
+    const agreed = await showConfirm(
+      'Eliminar Tarea', 
+      '¿Eliminar esta tarea? Esta acción no se puede deshacer.', 
+      'Sí, eliminar'
+    );
+    
+    if (agreed) {
+      console.log("[UI] Confirmación recibida: Procesando eliminación...");
+      deleteTask(taskId);
+    } else {
+      console.log("[UI] Eliminación cancelada por el usuario.");
+    }
   }
 
   async function deleteTask(taskId) {
+    // Normalización de ID (DHTMLX suele usar strings, el backend números)
+    console.log("[UI] Ejecutando flujo de deleteTask Universal para ID:", taskId, typeof taskId);
+    
+    // 1. Detección de Tipo (Tarea vs Compra)
+    const isPurchase = String(taskId).startsWith('pur_');
+    const cleanId   = isPurchase ? String(taskId).replace('pur_', '') : taskId;
+    const entityName = isPurchase ? 'Compra' : 'Tarea';
+    const apiPath    = isPurchase ? '/api/purchases/' : '/api/tasks/';
+
+    if (!window.gantt || !gantt.isTaskExists(taskId)) {
+       console.error(`[UI] Abortado: La ${entityName} no existe en el Gantt.`);
+       toast(`Error: ${entityName} no encontrada`, 'error');
+       return;
+    }
+    
+    // 2. Confirmación (Centralizada)
+    const agreed = await showConfirm(
+      `Eliminar ${entityName}`, 
+      `¿Estás seguro de eliminar esta ${entityName.toLowerCase()}? Esta acción no se puede deshacer.`, 
+      'Sí, eliminar'
+    );
+    if (!agreed) {
+      console.log(`[UI] Eliminación de ${entityName} cancelada por el usuario.`);
+      return;
+    }
+
     try {
-      await API.deleteTask(taskId);
-      allTasks = allTasks.filter(t => t.id_tarea != taskId);
-      GanttApp.removeTask(taskId);
-      closeTaskModal();
-      toast('Tarea eliminada', 'warning');
-    } catch (e) { toast(e.error || 'Error al eliminar', 'error'); }
+      toast(`Eliminando ${entityName.toLowerCase()}...`, 'info');
+      console.log(`[UI] Enviando petición DELETE manual a ${apiPath}${cleanId}...`);
+      
+      const res = await fetch(apiPath + cleanId, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + (window.Auth ? window.Auth.getToken() : '')
+        }
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error("[UI] El servidor rechazó la eliminación:", data.error || 'Error desconocido');
+        toast(data.error || `No se pudo eliminar la ${entityName.toLowerCase()}`, 'error');
+        return; 
+      }
+
+      console.log(`[UI] DELETE de ${entityName} exitoso. Sincronizando Gantt localmente...`);
+      
+      // 3. Limpieza Visual en Gantt (Directo y Silencioso)
+      if (window.GanttApp && window.GanttApp.deleteTaskDirect) {
+        window.GanttApp.deleteTaskDirect(taskId);
+      } else {
+        gantt.deleteTask(taskId);
+      }
+      
+      // 4. Limpieza en Memoria (allTasks) - CRÍTICO para no revivir items en scroll/filtros
+      allTasks = allTasks.filter(t => String(t.id || t.id_tarea) !== String(taskId));
+      
+      console.log("[UI] Flujo completado. Cerrando modales.");
+      closeTaskModal(); // Cierra modal de tarea
+      document.getElementById('modal-purchase')?.classList.add('hidden'); // Cierra modal de compra (si estaba abierto)
+      
+      toast(`${entityName} eliminada correctamente`, 'success');
+      if (isPurchase && window.GanttApp) window.GanttApp.updateSummary(); // Actualizar KPIs si era compra
+      
+    } catch (e) {
+      console.error("[UI] Error fatal en flujo de eliminación:", e);
+      toast('Error de red al intentar eliminar', 'error');
+    }
   }
 
   /* ── Notes Modal ────────────────────────────────────────── */
@@ -933,6 +1725,16 @@ window.UI = (() => {
     const btnNewTaskTb = document.getElementById('btn-new-task');
     if (btnNewTaskTb) btnNewTaskTb.addEventListener('click', () => openTaskModal(null));
 
+    // u25bau25ba Nueva Compra desde el dropdown sidebar
+    const btnNewPurchaseDropdown = document.getElementById('btn-new-purchase-dropdown');
+    if (btnNewPurchaseDropdown) {
+      btnNewPurchaseDropdown.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (newDropdownMenu) newDropdownMenu.style.display = 'none';
+        if (window.PurchaseModule) window.PurchaseModule.openNewPurchaseModal();
+      });
+    }
+
     const btnNewProject = document.getElementById('btn-new-project');
     if (btnNewProject) {
       btnNewProject.addEventListener('click', () => {
@@ -979,14 +1781,13 @@ window.UI = (() => {
     if (btnToggleSidebar) {
       btnToggleSidebar.addEventListener('click', () => {
         const collapsed = sidebar.classList.toggle('collapsed');
-        if (window.innerWidth < 768) {
+        if (window.innerWidth < 768 && overlay) {
           if (!collapsed) {
-             overlay.classList.add('active');
+            overlay.classList.add('active');
           } else {
-             overlay.classList.remove('active');
+            overlay.classList.remove('active');
           }
         }
-        // Redimensionar gantt tras la animación
         setTimeout(() => { if (window.gantt) gantt.render(); }, 250);
       });
     }
@@ -1017,7 +1818,30 @@ window.UI = (() => {
 
     // Guardar tarea
     document.getElementById('btn-save-task').addEventListener('click', saveTask);
+
+    // u25bau25ba Gestión de Dependencias (Dos Modales)
+    document.getElementById('btn-open-add-dep').addEventListener('click', openAddDepModal);
+    document.getElementById('btn-confirm-add-dep').addEventListener('click', confirmAddDep);
+    document.getElementById('btn-close-add-dep').addEventListener('click', () => {
+      document.getElementById('modal-add-dependency').classList.add('hidden');
+    });
+    document.getElementById('btn-cancel-add-dep').addEventListener('click', () => {
+      document.getElementById('modal-add-dependency').classList.add('hidden');
+    });
     
+    
+    // u25bau25ba Recálculo en Vivo en el Modal (UX Refactor)
+    const modalProjectionTriggers = [
+      'field-duracion', 
+      'field-fecha-inicio', 
+      'field-fecha-real-iniciada', 
+      'field-fecha-inicio-proyectada'
+    ];
+    modalProjectionTriggers.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', syncModalProjections);
+    });
+
     // Abrir notas rápidamente desde el modal de tarea
     document.getElementById('btn-open-notes-quick').addEventListener('click', (e) => {
       e.preventDefault();
@@ -1030,11 +1854,15 @@ window.UI = (() => {
       openNotesModal(tid);
     });
 
-    // Eliminar tarea (desde modal)
+    // Eliminar tarea (desde modal) - Uso de onclick para evitar duplicación de eventos
     const btnDelTask = document.getElementById('btn-delete-task');
-    if (btnDelTask) btnDelTask.addEventListener('click', () => {
-      if (editingTaskId) confirmDelete(editingTaskId);
-    });
+    if (btnDelTask) {
+      btnDelTask.onclick = () => {
+        console.log("[UI] Botón eliminar presionado en modal tarea.");
+        if (editingTaskId) deleteTask(editingTaskId);
+        else console.warn("[UI] Intento de borrado sin editingTaskId.");
+      };
+    }
 
     // Eliminar proyecto (desde modal)
     const btnDelProj = document.getElementById('btn-delete-project');
@@ -1105,7 +1933,7 @@ window.UI = (() => {
 
     const statusRisk = document.getElementById('status-click-risk');
     if (statusRisk) statusRisk.addEventListener('click', () => {
-      setEstado('Retrasada', '<span class="badge badge-retrasada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Retrasada</span>');
+      setEstado('Atrasada', '<span class="badge badge-retrasada" style="transform:scale(0.85); transform-origin:left; pointer-events:none;">Atrasada</span>');
     });
     
     const statusBlocked = document.getElementById('status-click-blocked');
@@ -1123,37 +1951,9 @@ window.UI = (() => {
 
         if (search && !(task.text || '').toLowerCase().includes(search)) return false;
 
-        // Estado filter: "Retrasada" is a calculated state (start <= today, 0% progress)
-        if (estado) {
-          const p = Math.round((task.progress || 0) * 100);
-          if (estado === 'Retrasada') {
-            const today = new Date(); today.setHours(0,0,0,0);
-            const tStart = new Date(task.start_date); tStart.setHours(0,0,0,0);
-            const isDelayed = (tStart <= today && p === 0 && task._estado !== 'Finalizada');
-            if (!isDelayed) return false;
-          } else if (estado === 'Bloqueada') {
-            let isBlocked = false;
-            if (p < 100 && task._estado !== 'Finalizada') {
-              if (task.$target && task.$target.length > 0) {
-                for (let linkId of task.$target) {
-                  if (gantt.isLinkExists(linkId)) {
-                    const link = gantt.getLink(linkId);
-                    if (gantt.isTaskExists(link.source)) {
-                      const pred = gantt.getTask(link.source);
-                      const predP = Math.round((pred.progress || 0) * 100);
-                      if (predP < 100 && pred._estado !== 'Finalizada') {
-                        isBlocked = true;
-                        break;
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            if (!isBlocked) return false;
-          } else if (task._estado !== estado) {
-            return false;
-          }
+        // Filtro por Estado (Autoritativo desde Backend)
+        if (estado && task._estado !== estado) {
+           return false;
         }
 
         if (resp && task.responsable !== resp) return false;
@@ -1164,10 +1964,18 @@ window.UI = (() => {
     }
 
     // Guardar proyecto
-    document.getElementById('btn-save-project').addEventListener('click', saveProject);
+    const btnSaveProj = document.getElementById('btn-save-project');
+    if (btnSaveProj) btnSaveProj.addEventListener('click', saveProject);
+
+    // Guardar compra
+    const btnSavePur = document.getElementById('btn-save-purchase');
+    if (btnSavePur) btnSavePur.addEventListener('click', PurchaseModule.savePurchase);
+    const btnDelPur = document.getElementById('btn-delete-purchase');
+    if (btnDelPur) btnDelPur.addEventListener('click', PurchaseModule.deletePurchase);
 
     // Guardar nota
-    document.getElementById('btn-save-note').addEventListener('click', saveNote);
+    const btnSaveNote = document.getElementById('btn-save-note');
+    if (btnSaveNote) btnSaveNote.addEventListener('click', saveNote);
 
     // Cerrar modal al click fuera
     document.querySelectorAll('.modal-overlay').forEach(overlay =>
@@ -1210,6 +2018,14 @@ window.UI = (() => {
     if (btnAddRecConf) btnAddRecConf.addEventListener('click', () => {
       openRecursoModal();
     });
+
+    // Toggle color mode
+    const btnToggleColor = document.getElementById('btn-toggle-color');
+    if (btnToggleColor) {
+      btnToggleColor.addEventListener('click', () => {
+        GanttApp.toggleColorMode();
+      });
+    }
 
     // Config Tabs
     document.querySelectorAll('.config-tab').forEach(tab => {
@@ -1411,15 +2227,21 @@ window.UI = (() => {
       if (s) openSubrespModal(s.id_lead, id);
     },
     deleteSubresp: reqDeleteSubresp,
-    editUser, deleteUser
+    editUser, deleteUser,
+    getResponsables: () => responsables,
+    getSubresponsables: () => subresponsables,
+    getProjects: () => projects,
+    getAllTasks: () => allTasks,
+    getResponsableName: PurchaseModule.getResponsableName,
+    openPurchaseModal: PurchaseModule.openPurchaseModal
   };
 })();
 
 // ── Bootstrap ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   const loggedIn = await Auth.init();
-  if (!loggedIn) return; // Se bloquea y se muestra Auth modal
-  
+  if (!loggedIn) return;
+
   GanttApp.init();
   await UI.init();
 });

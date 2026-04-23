@@ -320,6 +320,15 @@ body.is-admin #sidebar-role-label {
 }
 
 /* ── Main Content ─────────────────────────────────────────── */
+#gantt_here {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  transition: opacity 0.15s ease-in-out;
+}
+
 .main-content {
   flex: 1;
   display: flex;
@@ -899,10 +908,9 @@ select.filter-select {
 }
 
 .gantt_task_progress {
+  background-color: rgba(0, 0, 0, 0.35) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px 0 0 6px !important;
-  opacity: 0.65 !important;
-  background: #fff !important;
-  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .gantt_task_content {
@@ -921,27 +929,27 @@ select.filter-select {
 }
 
 .gantt_marker.today-marker {
-  background: var(--cyan) !important;
-  width: 2px !important;
-  opacity: 1;
-  z-index: 5 !important;
-  box-shadow: 0 0 8px var(--cyan), 0 0 16px rgba(34, 211, 238, 0.3);
+  background: var(--indigo);
+  opacity: 0.6;
+  z-index: 10;
 }
 
-.gantt_marker.project-start-marker {
+.project-start-marker {
+  background: var(--red) !important;
+  opacity: 0.7;
+  z-index: 9;
+}
+.project-start-marker .gantt_marker_content {
+  background: var(--red) !important;
+}
+
+.project-end-marker {
   background: var(--green) !important;
-  width: 3px !important;
-  opacity: 1;
-  z-index: 4 !important;
-  box-shadow: 0 0 6px var(--green), 0 0 12px rgba(16, 185, 129, 0.3);
+  opacity: 0.7;
+  z-index: 9;
 }
-
-.gantt_marker.project-end-marker {
-  background: var(--violet) !important;
-  width: 3px !important;
-  opacity: 1;
-  z-index: 4 !important;
-  box-shadow: 0 0 6px var(--violet), 0 0 12px rgba(168, 85, 247, 0.3);
+.project-end-marker .gantt_marker_content {
+  background: var(--green) !important;
 }
 
 .gantt_marker_content {
@@ -1221,6 +1229,29 @@ textarea.form-control {
   background: #28a745;
   color: #fff;
   box-shadow: 0 0 10px #28a74530;
+}
+
+.badge-retrasada {
+  background: #ff4d4d; /* Rojo vibrante muy brillante */
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 77, 77, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.badge-iniciada-atrasada {
+  background: #a80000; /* Burgundy profundo para mayor gravedad */
+  color: #fff;
+  box-shadow: 0 0 15px rgba(168, 0, 0, 0.6);
+  border: 1px solid #ff0000;
+  font-weight: 800; /* Un poco más de peso */
+}
+
+.badge-bloqueada {
+  background: var(--amber); /* Amarillo/Ámbar para atención */
+  color: #000;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
 }
 
 .delayed-dot {
@@ -1649,3 +1680,73 @@ textarea.form-control {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
   border-color: var(--indigo-glow) !important;
 }
+
+/* ══════════════════════════════════════════════════════
+   COMPRAS — Badges de Estado
+══════════════════════════════════════════════════════ */
+.badge-pur-sol  { background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px solid rgba(148,163,184,0.25); }
+.badge-pur-pres { background: rgba(245,158,11,0.15);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+.badge-pur-prec { background: rgba(99,102,241,0.15);  color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+.badge-pur-oc   { background: rgba(34,211,238,0.15);  color: #22d3ee; border: 1px solid rgba(34,211,238,0.3); }
+.badge-pur-comp { background: rgba(168,85,247,0.15);  color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+.badge-pur-ent  { background: rgba(16,185,129,0.15);  color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+
+/* ══════════════════════════════════════════════════════
+   COMPRAS — Barras de Gantt
+══════════════════════════════════════════════════════ */
+.gantt_task_line.purchase-normal  { border: none !important; }
+.gantt_task_line.purchase-at-risk { border: none !important; }
+.gantt_task_line.purchase-overdue { border: none !important; animation: pulse-red 1.5s infinite; }
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* ══════════════════════════════════════════════════════
+   VIEW TOGGLE GROUP
+══════════════════════════════════════════════════════ */
+#view-toggle-group .view-toggle-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 0;
+  transition: background var(--transition), color var(--transition);
+}
+#view-toggle-group .view-toggle-btn:hover {
+  background: var(--card);
+  color: var(--text);
+}
+#view-toggle-group .view-toggle-btn.active {
+  background: var(--indigo);
+  color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════
+   PURCHASE CARD (en modal-task y planning)
+══════════════════════════════════════════════════════ */
+.purchase-card {
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background var(--transition);
+  cursor: pointer;
+}
+.purchase-card:hover { background: var(--card-hover); }
+.purchase-card .pc-name  { font-weight: 600; font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.purchase-card .pc-meta  { font-size: 10px; color: var(--text-dim); }
+.purchase-card .pc-value { font-size: 11px; font-weight: 700; color: var(--cyan); white-space: nowrap; }
+.purchase-card .pc-edit  { padding: 2px 6px; font-size: 10px; opacity: 0.7; }
+.purchase-card:hover .pc-edit { opacity: 1; }
+
+/* Gantt de compras: Override Inter font */
+#gantt_purchases .gantt_grid_data .gantt_cell,
+#gantt_purchases .gantt_grid_scale .gantt_grid_head_cell,
+#gantt_purchases .gantt_task_scale .gantt_scale_cell,
+#gantt_purchases .gantt_task_content {
+  font-family: 'Inter', sans-serif !important;
+}
